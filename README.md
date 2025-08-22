@@ -10,7 +10,7 @@ A Node.js mock server that simulates the CICS CMCI (Customer Information Control
 ## Features
 
 - ✅ **XML Request/Response Handling**: Fully supports XML-based communication as expected by the CICS SDK
-- ✅ **Authentication Simulation**: Basic auth support with session management
+- ✅ **Authentication Simulation**: Basic auth with session management and LtpaToken2 cookie support
 - ✅ **Automatic Caching**: All responses include cache tokens for improved performance
 - ✅ **Retained Result Sets**: Complete implementation of CICS CMCI retained result sets with NODISCARD
 - ✅ **Result Pagination**: Support for index/count parameters and ORDERBY sorting
@@ -18,7 +18,8 @@ A Node.js mock server that simulates the CICS CMCI (Customer Information Control
 - ✅ **Multiple Resource Types**: Supports all major CICS resource types (Programs, Transactions, Regions, etc.)
 - ✅ **Error Simulation**: Can simulate various CMCI response codes (OK, NODATA, INVALIDPARM, etc.)
 - ✅ **RESTful Operations**: GET, POST, PUT, DELETE operations on CICS resources
-- ✅ **Admin Interface**: Built-in endpoints for managing sessions and cache
+- ✅ **LtpaToken2 Support**: Cookie-based authentication with 8-hour token expiration
+- ✅ **Admin Interface**: Built-in endpoints for managing sessions, tokens, and cache
 
 ## Quick Start
 
@@ -48,20 +49,25 @@ The server will start on `http://localhost:9080` by default.
 ```bash
 # Get CICS managed regions (with basic auth) - automatically includes cache token
 curl -X GET "http://localhost:9080/CICSSystemManagement/CICSManagedRegion" \
-  -H "Authorization: Basic dXNlcjpwYXNz"
+  -H "Authorization: Basic $(echo -n 'testuser:testpass' | base64)"
 # Response: <resultsummary ... cachetoken="ABC123DEF456" recordcount="10" />
+# Also sets LtpaToken2 cookie for subsequent requests
 
 # Get multiple records - all responses now include cache tokens
 curl -X GET "http://localhost:9080/CICSSystemManagement/CICSCICSPlex?count=2" \
-  -H "Authorization: Basic dXNlcjpwYXNz"
+  -H "Authorization: Basic $(echo -n 'testuser:testpass' | base64)"
 
 # Use cache token for efficient pagination
 curl -X GET "http://localhost:9080/CICSSystemManagement/CICSManagedRegion?cachetoken=ABC123DEF456&index=2&count=1" \
-  -H "Authorization: Basic dXNlcjpwYXNz"
+  -H "Authorization: Basic $(echo -n 'testuser:testpass' | base64)"
 
 # Simulate NODATA response
 curl -X GET "http://localhost:9080/CICSSystemManagement/CICSProgram?simulate=nodata" \
-  -H "Authorization: Basic dXNlcjpwYXNz"
+  -H "Authorization: Basic $(echo -n 'testuser:testpass' | base64)"
+
+# Use LtpaToken2 for subsequent requests (no Basic Auth needed)
+curl -X GET "http://localhost:9080/CICSSystemManagement/CICSManagedRegion" \
+  -H "LtpaToken2: YOUR_TOKEN_HERE"
 ```
 
 ### Retained Result Sets (NODISCARD) Examples
@@ -71,22 +77,22 @@ The mock server implements comprehensive CICS CMCI retained result sets as docum
 ```bash
 # Step 1: Create retained result set with NODISCARD and SUMMONLY
 curl -X GET "http://localhost:9080/CICSSystemManagement/CICSProgram?NODISCARD&SUMMONLY&count=1000" \
-  -H "Authorization: Basic dXNlcjpwYXNz"
+  -H "Authorization: Basic $(echo -n 'testuser:testpass' | base64)"
 
 # Response includes cachetoken for subsequent requests:
 # <resultsummary api_response1="1024" cachetoken="A1B2C3D4E5F6G7H8" recordcount="1000"/>
 
-# Step 2: Retrieve first 10 records using CICSResultCache
+# Step 2: Retrieve first 10 records using CICSResultCache (now using LtpaToken2)
 curl -X GET "http://localhost:9080/CICSSystemManagement/CICSResultCache/A1B2C3D4E5F6G7H8/1/10?NODISCARD" \
-  -H "Authorization: Basic dXNlcjpwYXNz"
+  -H "LtpaToken2: YOUR_TOKEN_FROM_STEP1"
 
 # Step 3: Retrieve next 10 records (11-20)
 curl -X GET "http://localhost:9080/CICSSystemManagement/CICSResultCache/A1B2C3D4E5F6G7H8/11/10?NODISCARD" \
-  -H "Authorization: Basic dXNlcjpwYXNz"
+  -H "LtpaToken2: YOUR_TOKEN_FROM_STEP1"
 
 # Step 4: Final request without NODISCARD to discard the result set
 curl -X GET "http://localhost:9080/CICSSystemManagement/CICSResultCache/A1B2C3D4E5F6G7H8?SUMMONLY" \
-  -H "Authorization: Basic dXNlcjpwYXNz"
+  -H "LtpaToken2: YOUR_TOKEN_FROM_STEP1"
 ```
 
 ### Pagination and Ordering Examples
@@ -94,19 +100,19 @@ curl -X GET "http://localhost:9080/CICSSystemManagement/CICSResultCache/A1B2C3D4
 ```bash
 # Create large result set for pagination
 curl -X GET "http://localhost:9080/CICSSystemManagement/CICSManagedRegion?NODISCARD&SUMMONLY&count=500" \
-  -H "Authorization: Basic dXNlcjpwYXNz"
+  -H "Authorization: Basic $(echo -n 'testuser:testpass' | base64)"
 
-# Get records 21-40 (page 2 with 20 records per page)
+# Get records 21-40 (page 2 with 20 records per page) - using LtpaToken2
 curl -X GET "http://localhost:9080/CICSSystemManagement/CICSResultCache/{TOKEN}/21/20?NODISCARD" \
-  -H "Authorization: Basic dXNlcjpwYXNz"
+  -H "LtpaToken2: YOUR_TOKEN_HERE"
 
 # Get first 10 records ordered by program name
 curl -X GET "http://localhost:9080/CICSSystemManagement/CICSResultCache/{TOKEN}/1/10?NODISCARD&orderby=program" \
-  -H "Authorization: Basic dXNlcjpwYXNz"
+  -H "LtpaToken2: YOUR_TOKEN_HERE"
 
 # Get records with multiple sort fields
 curl -X GET "http://localhost:9080/CICSSystemManagement/CICSResultCache/{TOKEN}/1/10?NODISCARD&orderby=status,program" \
-  -H "Authorization: Basic dXNlcjpwYXNz"
+  -H "LtpaToken2: YOUR_TOKEN_HERE"
 ```
 
 ### Legacy Caching (for backward compatibility)
@@ -114,11 +120,11 @@ curl -X GET "http://localhost:9080/CICSSystemManagement/CICSResultCache/{TOKEN}/
 ```bash
 # Request with legacy caching enabled
 curl -X GET "http://localhost:9080/CICSSystemManagement/CICSManagedRegion?cache=true" \
-  -H "Authorization: Basic dXNlcjpwYXNz"
+  -H "Authorization: Basic $(echo -n 'testuser:testpass' | base64)"
 
 # Use legacy cache token to retrieve cached results
 curl -X GET "http://localhost:9080/CICSSystemManagement/CICSManagedRegion?cachetoken=ABC123DEF456" \
-  -H "Authorization: Basic dXNlcjpwYXNz"
+  -H "LtpaToken2: YOUR_TOKEN_HERE"
 ```
 
 ### Resource Operations
@@ -126,18 +132,18 @@ curl -X GET "http://localhost:9080/CICSSystemManagement/CICSManagedRegion?cachet
 ```bash
 # Create a new program definition
 curl -X POST "http://localhost:9080/CICSSystemManagement/CICSDefinitionProgram" \
-  -H "Authorization: Basic dXNlcjpwYXNz" \
+  -H "Authorization: Basic $(echo -n 'testuser:testpass' | base64)" \
   -H "Content-Type: application/xml" \
   -d '<request><create><parameter name="CSD"><cicsdefinitionprogram program="MYPROG" /></parameter></create></request>'
 
-# Update a resource
+# Update a resource (using LtpaToken2 from previous request)
 curl -X PUT "http://localhost:9080/CICSSystemManagement/CICSDefinitionProgram" \
-  -H "Authorization: Basic dXNlcjpwYXNz" \
+  -H "LtpaToken2: YOUR_TOKEN_HERE" \
   -H "Content-Type: application/xml"
 
 # Delete a resource
 curl -X DELETE "http://localhost:9080/CICSSystemManagement/CICSDefinitionProgram/MYPROG" \
-  -H "Authorization: Basic dXNlcjpwYXNz"
+  -H "LtpaToken2: YOUR_TOKEN_HERE"
 ```
 
 ## Supported Resource Types
@@ -192,14 +198,19 @@ The mock server supports all major CICS resource types:
 
 ## Administrative Endpoints
 
-- `GET /health` - Server health check
-- `GET /admin/sessions` - List active sessions
-- `GET /admin/cache` - List legacy cache tokens
+### 📊 Monitoring
+- `GET /health` - Server health check (includes LtpaToken2 count)
+- `GET /admin/sessions` - List active sessions with LtpaToken2 info
+- `GET /admin/ltpa-tokens` - List all active LtpaToken2 mappings
+- `GET /admin/cache` - List legacy cache tokens  
 - `GET /admin/retained-results` - List all retained result sets with details
+
+### 🗑️ Cleanup
+- `DELETE /admin/sessions` - Clear all sessions, LtpaToken2 mappings, and retained result sets
+- `DELETE /admin/ltpa-tokens` - Clear all LtpaToken2 mappings only
 - `DELETE /admin/cache` - Clear all legacy cache entries
 - `DELETE /admin/retained-results` - Clear all retained result sets
 - `DELETE /admin/retained-results/{token}` - Delete specific retained result set
-- `DELETE /admin/sessions` - Clear all sessions and retained result sets
 
 ## Response Format
 
@@ -230,18 +241,51 @@ All responses follow the standard CICS CMCI XML format:
 
 ## Authentication
 
-The mock server supports Basic Authentication. Any username/password combination is accepted for testing purposes. In production scenarios, you would integrate with actual CICS security.
+The mock server supports both Basic Authentication and LtpaToken2 cookie-based authentication, simulating real CICS authentication flows.
 
-Example:
+### 🔐 Supported Credentials
+
+Only the following username/password combinations are accepted:
+
+- **testuser** / **testpass**
+- **adminusr** / **adminpas**
+
+### 🍪 LtpaToken2 Flow
+
+1. **Initial Authentication**: Use Basic Auth with valid credentials
+2. **Cookie Generation**: Server automatically sets `LtpaToken2` cookie (8-hour expiration)
+3. **Subsequent Requests**: Use `LtpaToken2` header or cookie instead of Basic Auth
+
+### Examples
 
 ```bash
-# Using curl with basic auth
-curl -u "myuser:mypass" "http://localhost:9080/CICSSystemManagement/CICSManagedRegion"
+# Step 1: Initial authentication with Basic Auth
+curl -u "testuser:testpass" "http://localhost:9080/CICSSystemManagement/CICSManagedRegion"
+# Server sets LtpaToken2 cookie in response
 
-# Or with Authorization header
-curl -H "Authorization: Basic $(echo -n 'myuser:mypass' | base64)" \
+# Step 2: Extract token from Set-Cookie header (or use browser cookies)
+# Set-Cookie: LtpaToken2=ABC123...; Max-Age=28800; HttpOnly; SameSite=Lax
+
+# Step 3: Use LtpaToken2 for subsequent requests
+curl -H "LtpaToken2: ABC123..." "http://localhost:9080/CICSSystemManagement/CICSManagedRegion"
+
+# Alternative: Use Authorization header format
+curl -H "Authorization: Basic $(echo -n 'testuser:testpass' | base64)" \
   "http://localhost:9080/CICSSystemManagement/CICSManagedRegion"
+
+# Invalid credentials are rejected
+curl -u "wronguser:wrongpass" "http://localhost:9080/CICSSystemManagement/CICSManagedRegion"
+# Response: HTTP 401 {"error":"Invalid username or password"}
 ```
+
+### 🔍 Admin Endpoints
+
+Monitor authentication state:
+
+- `GET /admin/sessions` - View active user sessions with LtpaToken2 info
+- `GET /admin/ltpa-tokens` - View all active LtpaToken2 mappings
+- `DELETE /admin/ltpa-tokens` - Clear all token mappings
+- `DELETE /admin/sessions` - Clear all sessions and tokens
 
 ## Configuration
 
@@ -264,12 +308,15 @@ const session = new AbstractSession({
   port: 9080,
   protocol: "http",
   type: "basic",
-  user: "testuser",
+  user: "testuser",        // Valid credentials: testuser:testpass or adminusr:adminpas
   password: "testpass",
 });
 
-// Use the mock server
+// Use the mock server - automatically handles LtpaToken2 cookies
 const response = await CicsCmciRestClient.getExpectParsedXml(session, "/CICSSystemManagement/CICSManagedRegion");
+
+// Subsequent requests will automatically use LtpaToken2 cookie
+const nextResponse = await CicsCmciRestClient.getExpectParsedXml(session, "/CICSSystemManagement/CICSProgram");
 ```
 
 ## 🚀 New: Automatic Caching
@@ -295,15 +342,16 @@ const response = await CicsCmciRestClient.getExpectParsedXml(session, "/CICSSyst
 
 ```bash
 # Step 1: Make any request - cache token included automatically
-curl -u "user:pass" "http://localhost:9080/CICSSystemManagement/CICSProgram?count=20"
+curl -u "testuser:testpass" "http://localhost:9080/CICSSystemManagement/CICSProgram?count=20"
 # Response: <resultsummary ... cachetoken="ABC123" recordcount="20" />
+# Also sets LtpaToken2 cookie
 
-# Step 2: Use cache token for efficient pagination
-curl -u "user:pass" "http://localhost:9080/CICSSystemManagement/CICSProgram?cachetoken=ABC123&index=5&count=3"
+# Step 2: Use cache token for efficient pagination (using LtpaToken2)
+curl -H "LtpaToken2: YOUR_TOKEN" "http://localhost:9080/CICSSystemManagement/CICSProgram?cachetoken=ABC123&index=5&count=3"
 # Returns records 5-7 from cached result set
 
 # Step 3: Invalid token automatically generates new data
-curl -u "user:pass" "http://localhost:9080/CICSSystemManagement/CICSProgram?cachetoken=INVALID&count=5"
+curl -H "LtpaToken2: YOUR_TOKEN" "http://localhost:9080/CICSSystemManagement/CICSProgram?cachetoken=INVALID&count=5"
 # Gracefully falls back to generating fresh response
 ```
 

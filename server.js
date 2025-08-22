@@ -15,12 +15,14 @@ const express = require('express');
 const cors = require('cors');
 const crypto = require('crypto');
 const xml2js = require('xml2js');
+const cookieParser = require('cookie-parser');
 
 const app = express();
 const PORT = process.env.PORT || 9080;
 
 // Middleware
 app.use(cors());
+app.use(cookieParser());
 app.use(express.text({ type: 'application/xml' }));
 app.use(express.json());
 app.use(express.raw({ type: 'application/xml' }));
@@ -28,6 +30,7 @@ app.use(express.raw({ type: 'application/xml' }));
 // In-memory storage for caching and sessions
 const cache = new Map(); // Basic cache storage (legacy)
 const sessions = new Map();
+const ltpaTokens = new Map(); // Map LtpaToken2 values to sessionIds
 
 // Enhanced retained result sets storage
 const retainedResultSets = new Map(); // Map<cacheToken, RetainedResultSet>
@@ -173,6 +176,22 @@ function generateCacheToken() {
  */
 function generateSessionToken() {
   return crypto.randomBytes(16).toString('hex').toUpperCase();
+}
+
+/**
+ * Generate a dummy LtpaToken2 for cookie-based authentication
+ */
+function generateLtpaToken2() {
+  // Generate a realistic-looking LtpaToken2 (base64-encoded like real IBM tokens)
+  const tokenData = crypto.randomBytes(64).toString('base64');
+  return tokenData.replace(/[+/=]/g, function(match) {
+    switch (match) {
+      case '+': return '-';
+      case '/': return '_';
+      case '=': return '';
+      default: return match;
+    }
+  });
 }
 
 /**
@@ -346,12 +365,34 @@ function generateMockData(resourceType, count = 1) {
  */
 function authenticateSession(req, res, next) {
   const authHeader = req.headers.authorization;
+  const ltpaToken = req.headers.ltpatoken2 || req.headers.LtpaToken2 || req.cookies.LtpaToken2;
+
+  // Check for LtpaToken2 in headers or cookies first
+  if (ltpaToken) {
+    const sessionId = ltpaTokens.get(ltpaToken);
+    
+    if (sessionId && sessions.has(sessionId)) {
+      const session = sessions.get(sessionId);
+      // Update last activity
+      session.lastActivity = new Date();
+      sessions.set(sessionId, session);
+      
+      req.sessionId = sessionId;
+      req.username = session.username;
+      req.authenticatedViaToken = true;
+      
+      console.log(`Authenticated user: ${session.username} with LtpaToken2 session: ${sessionId}`);
+      return next();
+    } else {
+      console.log(`Invalid or expired LtpaToken2: ${ltpaToken}`);
+      return res.status(401).json({ error: 'Invalid or expired LtpaToken2' });
+    }
+  }
 
   if (!authHeader) {
-    // No auth header - allow for basic testing but log
-    console.log('Warning: No authorization header provided');
-    req.sessionId = 'anonymous';
-    return next();
+    // No auth header - require authentication for CMCI endpoints
+    console.log('❌ No authorization header provided - authentication required');
+    return res.status(401).json({ error: 'Authentication required' });
   }
 
   // Simple Basic Auth simulation
@@ -359,24 +400,65 @@ function authenticateSession(req, res, next) {
     const credentials = Buffer.from(authHeader.substring(6), 'base64').toString();
     const [username, password] = credentials.split(':');
 
-    // Simple validation - in real CICS this would be more complex
-    if (username && password) {
+    // Validate against allowed credentials
+    const validCredentials = {
+      'testuser': 'testpass',
+      'adminusr': 'adminpas'
+    };
+
+    if (username && password && validCredentials[username] === password) {
       // Use a deterministic session ID based on username for testing/demo purposes
       // In production, you'd want proper session management with cookies/tokens
       const sessionId = crypto.createHash('md5').update(username).digest('hex').substring(0, 16).toUpperCase();
       
-      // Update existing session or create new one
+      // Check if session already exists and has a valid LtpaToken2
+      let existingSession = sessions.get(sessionId);
+      let ltpaToken2;
+      
+      if (existingSession && existingSession.ltpaToken2) {
+        // Reuse existing token
+        ltpaToken2 = existingSession.ltpaToken2;
+        console.log(`Reusing existing LtpaToken2 for user: ${username} with session: ${sessionId}`);
+      } else {
+        // Generate new LtpaToken2 for this session
+        ltpaToken2 = generateLtpaToken2();
+        
+        // Clean up any old tokens for this session
+        if (existingSession && existingSession.ltpaToken2) {
+          ltpaTokens.delete(existingSession.ltpaToken2);
+        }
+        
+        // Map the new LtpaToken2 to the session
+        ltpaTokens.set(ltpaToken2, sessionId);
+        
+        console.log(`Generated new LtpaToken2 for user: ${username} with session: ${sessionId}`);
+      }
+      
+      // Update session
       sessions.set(sessionId, {
         username,
-        loginTime: sessions.get(sessionId)?.loginTime || new Date(),
-        lastActivity: new Date()
+        loginTime: existingSession?.loginTime || new Date(),
+        lastActivity: new Date(),
+        ltpaToken2
       });
 
       req.sessionId = sessionId;
       req.username = username;
+      req.newLtpaToken = ltpaToken2; // Signal that we should set the cookie
 
-      console.log(`Authenticated user: ${username} with session: ${sessionId}`);
+      // Set the LtpaToken2 cookie in the response
+      res.cookie('LtpaToken2', ltpaToken2, {
+        httpOnly: true,
+        secure: false, // Set to true in production with HTTPS
+        maxAge: 8 * 60 * 60 * 1000, // 8 hours (typical for LTPA tokens)
+        sameSite: 'lax'
+      });
+      
       return next();
+    } else {
+      // Invalid credentials provided (either missing username/password or wrong credentials)
+      console.log(`Authentication failed for user: ${username || 'unknown'}`);
+      return res.status(401).json({ error: 'Invalid username or password' });
     }
   }
 
@@ -624,15 +706,48 @@ app.get(`/${CMCI_CONSTANTS.CICS_SYSTEM_MANAGEMENT}/*`, authenticateSession, (req
     displayed_recordcount: mockRecords.length.toString()
   };
 
-  // Automatically create cache token for all responses (unless one was already provided)
+  // Check for existing cache or create new cache token
   const providedToken = query.cachetoken || query.cacheToken;
   if (!providedToken) {
-    const cacheToken = generateCacheToken();
-    const retainedSet = new RetainedResultSet(resourceType, mockRecords, req.sessionId, query);
-    retainedResultSets.set(cacheToken, retainedSet);
-    resultSummary.cachetoken = cacheToken;
-
-    console.log(`💾 Auto-created retained result set: ${cacheToken} (${mockRecords.length} records)`);
+    // Create a unique key for this request based on resource type, session, and query params
+    const requestKey = JSON.stringify({
+      resourceType,
+      sessionId: req.sessionId,
+      count: query.count || '10',
+      simulate: query.simulate,
+      // Include other relevant query params that affect the result
+      summonly: query.hasOwnProperty('SUMMONLY') || query.hasOwnProperty('summonly')
+    });
+    
+    // Look for existing cache entry for this exact request
+    let existingToken = null;
+    for (const [token, resultSet] of retainedResultSets.entries()) {
+      if (resultSet.sessionId === req.sessionId && 
+          resultSet.resourceType === resourceType &&
+          JSON.stringify({
+            resourceType: resultSet.resourceType,
+            sessionId: resultSet.sessionId,
+            count: resultSet.query.count || '10',
+            simulate: resultSet.query.simulate,
+            summonly: resultSet.query.hasOwnProperty('SUMMONLY') || resultSet.query.hasOwnProperty('summonly')
+          }) === requestKey) {
+        existingToken = token;
+        break;
+      }
+    }
+    
+    if (existingToken) {
+      // Reuse existing cache
+      resultSummary.cachetoken = existingToken;
+      console.log(`♻️  Reusing existing cached result set: ${existingToken}`);
+    } else {
+      // Create new cache entry
+      const cacheToken = generateCacheToken();
+      const retainedSet = new RetainedResultSet(resourceType, mockRecords, req.sessionId, query);
+      retainedResultSets.set(cacheToken, retainedSet);
+      resultSummary.cachetoken = cacheToken;
+      console.log(`💾 Auto-created retained result set: ${cacheToken} (${mockRecords.length} records)`);
+    }
   }
 
   // Handle SUMMONLY - don't return records, just summary
@@ -786,7 +901,9 @@ app.get('/health', (req, res) => {
     status: 'healthy',
     timestamp: new Date().toISOString(),
     activeSessions: sessions.size,
-    cacheEntries: cache.size
+    cacheEntries: cache.size,
+    ltpaTokens: ltpaTokens.size,
+    retainedResultSets: retainedResultSets.size
   });
 });
 
@@ -798,10 +915,28 @@ app.get('/admin/sessions', (req, res) => {
     sessionId: id,
     username: data.username,
     loginTime: data.loginTime,
-    lastActivity: data.lastActivity
+    lastActivity: data.lastActivity,
+    ltpaToken2: data.ltpaToken2
   }));
 
   res.json(sessionList);
+});
+
+app.get('/admin/ltpa-tokens', (req, res) => {
+  const tokenList = Array.from(ltpaTokens.entries()).map(([token, sessionId]) => {
+    const session = sessions.get(sessionId);
+    return {
+      ltpaToken2: token,
+      sessionId: sessionId,
+      username: session?.username || 'unknown',
+      lastActivity: session?.lastActivity
+    };
+  });
+
+  res.json({
+    ltpaTokens: tokenList,
+    count: tokenList.length
+  });
 });
 
 app.get('/admin/cache', (req, res) => {
@@ -855,15 +990,36 @@ app.delete('/admin/retained-results/:token', (req, res) => {
 
 app.delete('/admin/sessions', (req, res) => {
   const sessionCount = sessions.size;
+  const ltpaTokenCount = ltpaTokens.size;
   sessions.clear();
+  ltpaTokens.clear();
   // Also clear retained result sets since they're session-dependent
   const retainedCount = retainedResultSets.size;
   retainedResultSets.clear();
 
   res.json({
-    message: 'All sessions and retained result sets cleared',
+    message: 'All sessions, LtpaToken2 mappings, and retained result sets cleared',
     sessionCount: sessionCount,
+    ltpaTokenCount: ltpaTokenCount,
     retainedResultSetsCount: retainedCount
+  });
+});
+
+app.delete('/admin/ltpa-tokens', (req, res) => {
+  const tokenCount = ltpaTokens.size;
+  ltpaTokens.clear();
+  
+  // Remove LtpaToken2 from session objects as well
+  for (const [sessionId, session] of sessions.entries()) {
+    if (session.ltpaToken2) {
+      delete session.ltpaToken2;
+      sessions.set(sessionId, session);
+    }
+  }
+
+  res.json({ 
+    message: 'All LtpaToken2 mappings cleared', 
+    count: tokenCount 
   });
 });
 
@@ -892,9 +1048,12 @@ app.listen(PORT, () => {
   console.log(`🚀 CICS CMCI Mock Server running on port ${PORT}`);
   console.log(`📊 Health check: http://localhost:${PORT}/health`);
   console.log(`🔧 Admin panel: http://localhost:${PORT}/admin/sessions`);
+  console.log(`🔑 LtpaToken2 admin: http://localhost:${PORT}/admin/ltpa-tokens`);
   console.log(`📚 Example endpoint: http://localhost:${PORT}/${CMCI_CONSTANTS.CICS_SYSTEM_MANAGEMENT}/CICSManagedRegion`);
   console.log('');
-  console.log('🔐 Authentication: Use Basic Auth with any username/password');
+  console.log('🔐 Authentication:');
+  console.log('  - Initial: Use Basic Auth (testuser:testpass or adminusr:adminpas)');
+  console.log('  - Subsequent: Use LtpaToken2 header or cookie (automatically set)');
   console.log('📝 Query parameters:');
   console.log('  - count=N: Return N mock records');
   console.log('  - simulate=nodata: Return NODATA response');
@@ -904,6 +1063,7 @@ app.listen(PORT, () => {
   console.log('  - index=N&count=M: Paginate cached results');
   console.log('  - orderby=FIELD: Sort cached results');
   console.log('📦 All responses now include automatic cache tokens!');
+  console.log('🍪 LtpaToken2 cookies are automatically set for authenticated sessions');
 });
 
 module.exports = app;
