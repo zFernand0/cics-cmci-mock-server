@@ -6,6 +6,7 @@ A Node.js mock server that simulates the CICS CMCI (Customer Information Control
 
 - ✅ **XML Request/Response Handling**: Fully supports XML-based communication as expected by the CICS SDK
 - ✅ **Authentication Simulation**: Basic auth support with session management
+- ✅ **Automatic Caching**: All responses include cache tokens for improved performance
 - ✅ **Retained Result Sets**: Complete implementation of CICS CMCI retained result sets with NODISCARD
 - ✅ **Result Pagination**: Support for index/count parameters and ORDERBY sorting
 - ✅ **Cache Management**: 15-minute automatic expiry and session-based security
@@ -40,12 +41,17 @@ The server will start on `http://localhost:9080` by default.
 ### Basic Resource Retrieval
 
 ```bash
-# Get CICS managed regions (with basic auth)
+# Get CICS managed regions (with basic auth) - automatically includes cache token
 curl -X GET "http://localhost:9080/CICSSystemManagement/CICSManagedRegion" \
   -H "Authorization: Basic dXNlcjpwYXNz"
+# Response: <resultsummary ... cachetoken="ABC123DEF456" recordcount="10" />
 
-# Get multiple records
+# Get multiple records - all responses now include cache tokens
 curl -X GET "http://localhost:9080/CICSSystemManagement/CICSCICSPlex?count=2" \
+  -H "Authorization: Basic dXNlcjpwYXNz"
+
+# Use cache token for efficient pagination
+curl -X GET "http://localhost:9080/CICSSystemManagement/CICSManagedRegion?cachetoken=ABC123DEF456&index=2&count=1" \
   -H "Authorization: Basic dXNlcjpwYXNz"
 
 # Simulate NODATA response
@@ -167,10 +173,11 @@ The mock server supports all major CICS resource types:
 
 ### Mock Server Specific Parameters
 
-- `count=N` - Return N mock records (default: 1, or 100 with NODISCARD)
+- `count=N` - Return N mock records (default: 10)
 - `simulate=nodata` - Simulate NODATA response (1027)
+- `cachetoken=TOKEN` - Use existing cache token to retrieve cached results
+- `index=N` - Start pagination from record N (1-based, used with cachetoken)
 - `cache=true` - Enable legacy result caching (for backward compatibility)
-- `cachetoken=TOKEN` - Retrieve legacy cached results using token
 
 ### URL Path Parameters (for CICSResultCache)
 
@@ -260,6 +267,41 @@ const session = new AbstractSession({
 const response = await CicsCmciRestClient.getExpectParsedXml(session, "/CICSSystemManagement/CICSManagedRegion");
 ```
 
+## 🚀 New: Automatic Caching
+
+**All responses now include cache tokens automatically!** This improves performance by enabling efficient pagination and data reuse without requiring the `NODISCARD` parameter.
+
+### How It Works
+
+1. **Every GET request** automatically generates a cache token and stores the result set
+2. **Use the cache token** in subsequent requests for pagination: `?cachetoken=TOKEN&index=2&count=5`
+3. **Cache expires** after 15 minutes of inactivity (follows IBM CICS specification)
+4. **Invalid/expired tokens** automatically generate fresh data (graceful fallback)
+
+### Benefits
+
+- 🎯 **Zero configuration** - automatic caching for all responses
+- 🚀 **Better performance** - cached pagination instead of regenerating data
+- 📱 **Improved UX** - efficient paging for large datasets
+- 🔐 **Secure** - session-isolated cache access
+- ⚡ **Backwards compatible** - existing clients continue to work
+
+### Example Usage
+
+```bash
+# Step 1: Make any request - cache token included automatically
+curl -u "user:pass" "http://localhost:9080/CICSSystemManagement/CICSProgram?count=20"
+# Response: <resultsummary ... cachetoken="ABC123" recordcount="20" />
+
+# Step 2: Use cache token for efficient pagination
+curl -u "user:pass" "http://localhost:9080/CICSSystemManagement/CICSProgram?cachetoken=ABC123&index=5&count=3"
+# Returns records 5-7 from cached result set
+
+# Step 3: Invalid token automatically generates new data
+curl -u "user:pass" "http://localhost:9080/CICSSystemManagement/CICSProgram?cachetoken=INVALID&count=5"
+# Gracefully falls back to generating fresh response
+```
+
 ## Retained Result Sets Features
 
 The mock server implements the complete CICS CMCI retained result sets functionality:
@@ -324,4 +366,4 @@ This mock server can be extended to support additional CICS features:
 
 ## License
 
-Eclipse Public License v2.0 (EPL-2.0)
+Apache License 2.0 - see [LICENSE](LICENSE) file for details.

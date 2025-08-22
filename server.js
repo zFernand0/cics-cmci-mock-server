@@ -356,10 +356,14 @@ function authenticateSession(req, res, next) {
 
     // Simple validation - in real CICS this would be more complex
     if (username && password) {
-      const sessionId = generateSessionToken();
+      // Use a deterministic session ID based on username for testing/demo purposes
+      // In production, you'd want proper session management with cookies/tokens
+      const sessionId = crypto.createHash('md5').update(username).digest('hex').substring(0, 16).toUpperCase();
+      
+      // Update existing session or create new one
       sessions.set(sessionId, {
         username,
-        loginTime: new Date(),
+        loginTime: sessions.get(sessionId)?.loginTime || new Date(),
         lastActivity: new Date()
       });
 
@@ -502,14 +506,88 @@ app.get(`/${CMCI_CONSTANTS.CICS_SYSTEM_MANAGEMENT}/*`, authenticateSession, (req
     );
   }
 
-  // Check if this is a legacy cache request (for backward compatibility)
-  if (query.cachetoken) {
-    const cachedResult = cache.get(query.cachetoken);
+  // Check if this is a cache request using provided cacheToken
+  if (query.cachetoken || query.cacheToken) {
+    const providedToken = query.cachetoken || query.cacheToken;
+    
+    // First check retained result sets
+    const retainedSet = retainedResultSets.get(providedToken);
+    if (retainedSet) {
+      // Check session access (security - only creator can access)
+      if (retainedSet.sessionId !== req.sessionId) {
+        console.log(`🚫 Access denied for cache token ${providedToken} - wrong session`);
+        return res.status(403).set('Content-Type', 'application/xml').send(
+          createXMLResponse({
+            api_function: 'GET',
+            api_response1: CMCI_CONSTANTS.RESPONSE_CODES.NOTAVAILABLE,
+            api_response2: CMCI_CONSTANTS.SUCCESS_RESPONSE_2,
+            api_response1_alt: 'NOTAVAILABLE',
+            api_response2_alt: 'Access denied',
+            recordcount: '0'
+          })
+        );
+      }
+
+      // Check if expired
+      if (retainedSet.isExpired()) {
+        console.log(`⏰ Cache token expired: ${providedToken}`);
+        retainedResultSets.delete(providedToken);
+        // Continue to generate new response below
+      } else {
+        console.log(`💾 Cache hit for token: ${providedToken}`);
+        
+        // Parse index and count from query params for cached results
+        const index = parseInt(query.index || '1');
+        const count = query.count ? parseInt(query.count) : null;
+        const orderBy = query.orderby || query.ORDERBY;
+        
+        const { records, displayedCount, totalCount } = retainedSet.getRecords(index, count, orderBy);
+        
+        const resultSummary = {
+          api_response1: CMCI_CONSTANTS.RESPONSE_CODES.OK,
+          api_response2: CMCI_CONSTANTS.SUCCESS_RESPONSE_2,
+          api_response1_alt: 'OK',
+          api_response2_alt: '',
+          recordcount: totalCount.toString(),
+          displayed_recordcount: displayedCount.toString()
+        };
+
+        // Keep the result set if NODISCARD is specified
+        const keepCache = query.hasOwnProperty('NODISCARD') || query.hasOwnProperty('nodiscard');
+        if (keepCache) {
+          resultSummary.cachetoken = providedToken;
+          console.log(`💾 Retaining result set: ${providedToken}`);
+        } else {
+          // Remove the result set as per IBM docs
+          retainedResultSets.delete(providedToken);
+          console.log(`🗑️  Discarded result set: ${providedToken}`);
+        }
+
+        // Build response - only include records if not SUMMONLY
+        let recordsData = null;
+        const summOnly = query.hasOwnProperty('SUMMONLY') || query.hasOwnProperty('summonly');
+
+        if (!summOnly && records.length > 0) {
+          recordsData = {};
+          if (records.length === 1) {
+            recordsData[retainedSet.resourceType] = records[0];
+          } else {
+            recordsData[retainedSet.resourceType] = records;
+          }
+        }
+
+        const xmlResponse = createXMLResponse(resultSummary, recordsData);
+        return res.set('Content-Type', 'application/xml').send(xmlResponse);
+      }
+    }
+    
+    // Fall back to legacy cache for backward compatibility
+    const cachedResult = cache.get(providedToken);
     if (cachedResult) {
-      console.log(`💽 Legacy cache hit for token: ${query.cachetoken}`);
+      console.log(`💽 Legacy cache hit for token: ${providedToken}`);
       return res.set('Content-Type', 'application/xml').send(cachedResult);
     } else {
-      console.log(`💽 Legacy cache miss for token: ${query.cachetoken}`);
+      console.log(`💽 Cache miss/expired for token: ${providedToken} - generating new response`);
     }
   }
 
@@ -528,8 +606,8 @@ app.get(`/${CMCI_CONSTANTS.CICS_SYSTEM_MANAGEMENT}/*`, authenticateSession, (req
     return res.set('Content-Type', 'application/xml').send(nodataResponse);
   }
 
-  // Generate mock data - use larger dataset for retained result sets
-  const recordCount = parseInt(query.count || (query.hasOwnProperty('NODISCARD') ? '100' : '1'));
+  // Generate mock data - use larger dataset for better caching demonstration
+  const recordCount = parseInt(query.count || '10');
   const mockRecords = generateMockData(resourceType, recordCount);
 
   const resultSummary = {
@@ -541,15 +619,15 @@ app.get(`/${CMCI_CONSTANTS.CICS_SYSTEM_MANAGEMENT}/*`, authenticateSession, (req
     displayed_recordcount: mockRecords.length.toString()
   };
 
-  // Handle NODISCARD - create retained result set
-  const useRetainedResultSet = query.hasOwnProperty('NODISCARD') || query.hasOwnProperty('nodiscard');
-  if (useRetainedResultSet) {
+  // Automatically create cache token for all responses (unless one was already provided)
+  const providedToken = query.cachetoken || query.cacheToken;
+  if (!providedToken) {
     const cacheToken = generateCacheToken();
     const retainedSet = new RetainedResultSet(resourceType, mockRecords, req.sessionId, query);
     retainedResultSets.set(cacheToken, retainedSet);
     resultSummary.cachetoken = cacheToken;
 
-    console.log(`💾 Created retained result set: ${cacheToken} (${mockRecords.length} records)`);
+    console.log(`💾 Auto-created retained result set: ${cacheToken} (${mockRecords.length} records)`);
   }
 
   // Handle SUMMONLY - don't return records, just summary
@@ -568,8 +646,8 @@ app.get(`/${CMCI_CONSTANTS.CICS_SYSTEM_MANAGEMENT}/*`, authenticateSession, (req
 
   const xmlResponse = createXMLResponse(resultSummary, recordsData);
 
-  // Store in legacy cache if requested (for backward compatibility)
-  if (query.cache === 'true' && !useRetainedResultSet) {
+  // Store in legacy cache if explicitly requested (for backward compatibility)
+  if (query.cache === 'true' && !resultSummary.cachetoken) {
     const legacyCacheToken = generateCacheToken();
     cache.set(legacyCacheToken, xmlResponse);
     resultSummary.cachetoken = legacyCacheToken;
@@ -815,8 +893,12 @@ app.listen(PORT, () => {
   console.log('📝 Query parameters:');
   console.log('  - count=N: Return N mock records');
   console.log('  - simulate=nodata: Return NODATA response');
-  console.log('  - cache=true: Enable caching');
-  console.log('  - summonly: Return summary only with cache token');
+  console.log('  - cachetoken=TOKEN: Use existing cache token');
+  console.log('  - nodiscard: Keep result set after request');
+  console.log('  - summonly: Return summary only');
+  console.log('  - index=N&count=M: Paginate cached results');
+  console.log('  - orderby=FIELD: Sort cached results');
+  console.log('📦 All responses now include automatic cache tokens!');
 });
 
 module.exports = app;

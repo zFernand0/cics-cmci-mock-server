@@ -1,6 +1,6 @@
 {
   "name": "cics-cmci-mock-server",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "description": "Mock server for CICS CMCI REST API used for testing CICS VSCode extension",
   "main": "server.js",
   "scripts": {
@@ -13,10 +13,11 @@
     "mock",
     "server",
     "xml",
-    "rest"
+    "rest",
+    "caching"
   ],
-  "author": "CICS Development Team",
-  "license": "EPL-2.0",
+  "author": "Fernando Rijo Cedeno",
+  "license": "Apache-2.0",
   "dependencies": {
     "express": "^4.18.2",
     "xml2js": "^0.6.2",
