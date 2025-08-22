@@ -1,3 +1,8 @@
+<!--
+SPDX-License-Identifier: Apache-2.0
+Copyright 2025 Fernando Rijo Cedeno
+-->
+
 # CICS CMCI Mock Server
 
 A Node.js mock server that simulates the CICS CMCI (Customer Information Control System - CICSPlex System Manager Configuration Interface) REST API for testing and development of the CICS VSCode extension.
@@ -363,6 +368,27 @@ This mock server can be extended to support additional CICS features:
 - Custom response templates for different scenarios
 - WebSocket support for real-time updates
 - Advanced security models and authentication
+
+## Development Scripts
+
+### License Header Management
+
+This project includes a script to add SPDX license headers to all source files:
+
+```bash
+# Check which files would get license headers (dry run)
+npm run license:check
+
+# Add license headers to all applicable files
+npm run license:add
+```
+
+The script automatically adds appropriate headers for different file types:
+- **JavaScript files**: `/** SPDX-License-Identifier: Apache-2.0 ... */`
+- **Shell scripts**: `# SPDX-License-Identifier: Apache-2.0 ...` (preserves shebang)
+- **Markdown files**: `<!-- SPDX-License-Identifier: Apache-2.0 ... -->`
+
+Files that already have license headers are automatically skipped.
 
 ## License
 

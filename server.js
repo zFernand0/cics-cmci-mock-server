@@ -1,4 +1,9 @@
 /**
+ * SPDX-License-Identifier: Apache-2.0
+ * Copyright 2025 Fernando Rijo Cedeno
+ */
+
+/**
  * CICS CMCI Mock Server
  * 
  * This mock server simulates the CICS CMCI REST API for testing and development

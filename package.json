@@ -5,7 +5,9 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "nodemon server.js"
+    "dev": "nodemon server.js",
+    "license:add": "node scripts/add-license-headers.js",
+    "license:check": "node scripts/add-license-headers.js --dry-run"
   },
   "keywords": [
     "cics",

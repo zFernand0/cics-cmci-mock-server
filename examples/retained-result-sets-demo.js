@@ -1,4 +1,9 @@
 /**
+ * SPDX-License-Identifier: Apache-2.0
+ * Copyright 2025 Fernando Rijo Cedeno
+ */
+
+/**
  * Retained Result Sets Demo
  * 
  * This script demonstrates the comprehensive CICS CMCI retained result sets

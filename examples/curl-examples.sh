@@ -1,4 +1,7 @@
 #!/bin/bash
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2025 Fernando Rijo Cedeno
+
 
 # CICS CMCI Mock Server - cURL Examples
 # This script demonstrates various ways to interact with the mock server

@@ -1,4 +1,9 @@
 /**
+ * SPDX-License-Identifier: Apache-2.0
+ * Copyright 2025 Fernando Rijo Cedeno
+ */
+
+/**
  * Test client for CICS CMCI Mock Server
  * 
  * This script demonstrates how to interact with the mock server
