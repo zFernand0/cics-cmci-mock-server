@@ -14,7 +14,7 @@ const http = require('http');
 const xml2js = require('xml2js');
 
 const MOCK_SERVER_URL = 'localhost:9080';
-const TEST_CREDENTIALS = Buffer.from('testuser:testpass').toString('base64');
+const ADMIN_CREDENTIALS = Buffer.from('adminusr:adminpas').toString('base64');
 
 /**
  * Make an HTTP request to the mock server
@@ -27,7 +27,7 @@ function makeRequest(method, path, body = null) {
       path: path,
       method: method,
       headers: {
-        'Authorization': `Basic ${TEST_CREDENTIALS}`,
+        'Authorization': `Basic ${ADMIN_CREDENTIALS}`,
         'Content-Type': 'application/xml'
       }
     };
@@ -249,6 +249,97 @@ async function testHealthCheck() {
 }
 
 /**
+ * Test OTP authentication flow
+ */
+async function testOTPAuthentication() {
+  console.log('\n🔢 Testing OTP authentication...');
+
+  // Generate OTP for testuser
+  console.log('   Generating OTP for testuser...');
+  const otpResponse = await makeRequest('POST', '/auth/generate-otp', JSON.stringify({username: 'testuser'}));
+  
+  if (otpResponse.statusCode !== 200) {
+    throw new Error(`OTP generation failed: ${otpResponse.statusCode}`);
+  }
+
+  const otpData = JSON.parse(otpResponse.body);
+  console.log(`   OTP generated: ${otpData.otp}`);
+
+  // Check OTP status
+  const statusResponse = await makeRequest('GET', '/auth/otp-status/testuser');
+  const statusData = JSON.parse(statusResponse.body);
+  console.log(`   OTP status: ${statusData.hasOTP ? 'Active' : 'Inactive'}`);
+
+  // Test authentication with OTP
+  console.log('   Testing authentication with OTP...');
+  const testUserCredentials = Buffer.from(`testuser:${otpData.otp}`).toString('base64');
+  
+  const authOptions = {
+    hostname: 'localhost',
+    port: 9080,
+    path: '/CICSSystemManagement/CICSManagedRegion?count=1',
+    method: 'GET',
+    headers: {
+      'Authorization': `Basic ${testUserCredentials}`,
+      'Content-Type': 'application/xml'
+    }
+  };
+
+  const authResult = await new Promise((resolve, reject) => {
+    const req = http.request(authOptions, (res) => {
+      let data = '';
+      res.on('data', (chunk) => data += chunk);
+      res.on('end', () => resolve({ statusCode: res.statusCode, headers: res.headers, body: data }));
+    });
+    req.on('error', reject);
+    req.end();
+  });
+
+  if (authResult.statusCode !== 200) {
+    throw new Error(`OTP authentication failed: ${authResult.statusCode}`);
+  }
+
+  // Extract LTPA token from headers
+  const setCookieHeader = authResult.headers['set-cookie']?.find(cookie => cookie.includes('LtpaToken2'));
+  const ltpaToken = setCookieHeader ? setCookieHeader.match(/LtpaToken2=([^;]+)/)?.[1] : null;
+  
+  if (ltpaToken) {
+    console.log(`   LTPA token captured: ${ltpaToken.substring(0, 20)}...`);
+    
+    // Test subsequent request with LTPA token
+    console.log('   Testing LTPA token authentication...');
+    const tokenOptions = {
+      hostname: 'localhost',
+      port: 9080,
+      path: '/CICSSystemManagement/CICSCICSPlex?count=1',
+      method: 'GET',
+      headers: {
+        'LtpaToken2': ltpaToken,
+        'Content-Type': 'application/xml'
+      }
+    };
+
+    const tokenResult = await new Promise((resolve, reject) => {
+      const req = http.request(tokenOptions, (res) => {
+        let data = '';
+        res.on('data', (chunk) => data += chunk);
+        res.on('end', () => resolve({ statusCode: res.statusCode, body: data }));
+      });
+      req.on('error', reject);
+      req.end();
+    });
+
+    if (tokenResult.statusCode !== 200) {
+      throw new Error(`LTPA token authentication failed: ${tokenResult.statusCode}`);
+    }
+    console.log('   LTPA token authentication successful');
+  }
+
+  console.log('✅ OTP authentication test passed');
+  return { otp: otpData.otp, ltpaToken };
+}
+
+/**
  * Test admin endpoints
  */
 async function testAdminEndpoints() {
@@ -257,15 +348,25 @@ async function testAdminEndpoints() {
   // Test sessions endpoint
   const sessionsResponse = await makeRequest('GET', '/admin/sessions');
   const sessions = JSON.parse(sessionsResponse.body);
-  console.log(`   Active sessions: ${sessions.length}`);
+  console.log(`   Active sessions: ${sessions.sessions ? sessions.sessions.length : 0}`);
+
+  // Test LTPA tokens endpoint
+  const tokensResponse = await makeRequest('GET', '/admin/ltpa-tokens');
+  const tokens = JSON.parse(tokensResponse.body);
+  console.log(`   Active LTPA tokens: ${tokens.tokens ? tokens.tokens.length : 0}`);
+
+  // Test OTPs endpoint
+  const otpsResponse = await makeRequest('GET', '/admin/otps');
+  const otps = JSON.parse(otpsResponse.body);
+  console.log(`   Active OTPs: ${otps.count || 0}`);
 
   // Test cache endpoint
   const cacheResponse = await makeRequest('GET', '/admin/cache');
   const cache = JSON.parse(cacheResponse.body);
-  console.log(`   Cache entries: ${cache.count}`);
+  console.log(`   Cache entries: ${cache.count || 0}`);
 
   console.log('✅ Admin endpoints test passed');
-  return { sessions, cache };
+  return { sessions, tokens, otps, cache };
 }
 
 /**
@@ -282,16 +383,18 @@ async function runAllTests() {
     await testNoDataSimulation();
     await testCaching();
     await testPost();
+    await testOTPAuthentication();
     await testAdminEndpoints();
 
     console.log('\n🎉 All tests passed successfully!');
     console.log('\n📋 Test Summary:');
     console.log('   ✅ Health check');
-    console.log('   ✅ Basic GET request');
+    console.log('   ✅ Basic GET request (admin auth)');
     console.log('   ✅ Multiple records');
     console.log('   ✅ NODATA simulation');
     console.log('   ✅ Caching functionality');
     console.log('   ✅ POST request');
+    console.log('   ✅ OTP authentication & LTPA tokens');
     console.log('   ✅ Admin endpoints');
 
   } catch (error) {

@@ -10,7 +10,8 @@ A Node.js mock server that simulates the CICS CMCI (Customer Information Control
 ## Features
 
 - ✅ **XML Request/Response Handling**: Fully supports XML-based communication as expected by the CICS SDK
-- ✅ **Authentication Simulation**: Basic auth with session management and LtpaToken2 cookie support
+- ✅ **Multi-Method Authentication**: Admin static credentials, testuser OTP authentication, and LtpaToken2 cookie support
+- ✅ **OTP (One-Time Password) System**: 6-digit OTPs with 5-minute expiration for enhanced security
 - ✅ **Automatic Caching**: All responses include cache tokens for improved performance
 - ✅ **Retained Result Sets**: Complete implementation of CICS CMCI retained result sets with NODISCARD
 - ✅ **Result Pagination**: Support for index/count parameters and ORDERBY sorting
@@ -186,7 +187,7 @@ The mock server supports all major CICS resource types:
 
 - `count=N` - Return N mock records (default: 10)
 - `simulate=nodata` - Simulate NODATA response (1027)
-- `cachetoken=TOKEN` - Use existing cache token to retrieve cached results
+
 - `index=N` - Start pagination from record N (1-based, used with cachetoken)
 - `cache=true` - Enable legacy result caching (for backward compatibility)
 
@@ -245,10 +246,14 @@ The mock server supports both Basic Authentication and LtpaToken2 cookie-based a
 
 ### 🔐 Supported Credentials
 
-Only the following username/password combinations are accepted:
+The mock server supports two authentication methods:
 
-- **testuser** / **testpass**
-- **adminusr** / **adminpas**
+#### Static Credentials (Admin Only)
+- **adminusr** / **adminpas** - Admin user with permanent static password
+
+#### OTP-Based Authentication (testuser)
+- **testuser** - Must use one-time passwords (OTP) generated via API
+- No static password; requires OTP generation before each authentication
 
 ### 🍪 LtpaToken2 Flow
 
@@ -258,20 +263,37 @@ Only the following username/password combinations are accepted:
 
 ### Examples
 
+#### Admin Authentication (Static Password)
 ```bash
-# Step 1: Initial authentication with Basic Auth
-curl -u "testuser:testpass" "http://localhost:9080/CICSSystemManagement/CICSManagedRegion"
+# Admin user with permanent credentials
+curl -u "adminusr:adminpas" "http://localhost:9080/CICSSystemManagement/CICSManagedRegion"
+# Server sets LtpaToken2 cookie in response
+```
+
+#### testuser Authentication (OTP Flow)
+```bash
+# Step 1: Generate OTP for testuser
+curl -X POST "http://localhost:9080/auth/generate-otp" \
+  -H "Content-Type: application/json" \
+  -d '{"username": "testuser"}'
+# Response: {"otp": "123456", "expiresIn": "5 minutes", ...}
+
+# Step 2: Use OTP as password for authentication
+curl -u "testuser:123456" "http://localhost:9080/CICSSystemManagement/CICSManagedRegion"
 # Server sets LtpaToken2 cookie in response
 
-# Step 2: Extract token from Set-Cookie header (or use browser cookies)
+# Step 3: Check OTP status (optional)
+curl "http://localhost:9080/auth/otp-status/testuser"
+# Response: {"hasOTP": true, "timeRemainingSeconds": 240, ...}
+```
+
+#### Subsequent Requests (Both Users)
+```bash
+# Extract token from Set-Cookie header (or use browser cookies)
 # Set-Cookie: LtpaToken2=ABC123...; Max-Age=28800; HttpOnly; SameSite=Lax
 
-# Step 3: Use LtpaToken2 for subsequent requests
+# Use LtpaToken2 for subsequent requests
 curl -H "LtpaToken2: ABC123..." "http://localhost:9080/CICSSystemManagement/CICSManagedRegion"
-
-# Alternative: Use Authorization header format
-curl -H "Authorization: Basic $(echo -n 'testuser:testpass' | base64)" \
-  "http://localhost:9080/CICSSystemManagement/CICSManagedRegion"
 
 # Invalid credentials are rejected
 curl -u "wronguser:wrongpass" "http://localhost:9080/CICSSystemManagement/CICSManagedRegion"
@@ -286,6 +308,13 @@ Monitor authentication state:
 - `GET /admin/ltpa-tokens` - View all active LtpaToken2 mappings
 - `DELETE /admin/ltpa-tokens` - Clear all token mappings
 - `DELETE /admin/sessions` - Clear all sessions and tokens
+
+### 🔢 OTP Management Endpoints
+
+- `POST /auth/generate-otp` - Generate OTP for testuser (Body: `{"username": "testuser"}`)
+- `GET /auth/otp-status/:username` - Check OTP status for a user
+- `GET /admin/otps` - View all active OTPs (admin endpoint)
+- `DELETE /admin/otps` - Clear all OTPs (admin endpoint)
 
 ## Configuration
 
@@ -326,7 +355,7 @@ const nextResponse = await CicsCmciRestClient.getExpectParsedXml(session, "/CICS
 ### How It Works
 
 1. **Every GET request** automatically generates a cache token and stores the result set
-2. **Use the cache token** in subsequent requests for pagination: `?cachetoken=TOKEN&index=2&count=5`
+2. **Use the cache token** via the CICSResultCache path: `/CICSResultCache/{cachetoken}/{index}/{count}`
 3. **Cache expires** after 15 minutes of inactivity (follows IBM CICS specification)
 4. **Invalid/expired tokens** automatically generate fresh data (graceful fallback)
 

@@ -31,6 +31,7 @@ app.use(express.raw({ type: 'application/xml' }));
 const cache = new Map(); // Basic cache storage (legacy)
 const sessions = new Map();
 const ltpaTokens = new Map(); // Map LtpaToken2 values to sessionIds
+const otpStorage = new Map(); // Map<username, {otp: string, expiresAt: Date}>
 
 // Enhanced retained result sets storage
 const retainedResultSets = new Map(); // Map<cacheToken, RetainedResultSet>
@@ -192,6 +193,48 @@ function generateLtpaToken2() {
       default: return match;
     }
   });
+}
+
+/**
+ * Generate a 6-digit OTP that expires in 5 minutes
+ */
+function generateOTP(username) {
+  const otp = Math.floor(100000 + Math.random() * 900000).toString(); // 6-digit OTP
+  const expiresAt = new Date(Date.now() + 5 * 60 * 1000); // 5 minutes from now
+  
+  otpStorage.set(username, { otp, expiresAt });
+  console.log(`Generated OTP for ${username}: ${otp} (valid for 5 minutes)`);
+  
+  return otp;
+}
+
+/**
+ * Validate OTP for a given username
+ */
+function validateOTP(username, providedOTP) {
+  const stored = otpStorage.get(username);
+  
+  if (!stored) {
+    console.log(`No OTP found for user: ${username}`);
+    return false;
+  }
+  
+  if (new Date() > stored.expiresAt) {
+    const expiredTime = Math.ceil((new Date() - stored.expiresAt) / 1000);
+    console.log(`OTP expired for user: ${username} (expired ${expiredTime} seconds ago)`);
+    otpStorage.delete(username); // Clean up expired OTP
+    return false;
+  }
+  
+  if (stored.otp === providedOTP) {
+    const remainingTime = Math.ceil((stored.expiresAt - new Date()) / 1000);
+    console.log(`OTP validated successfully for user: ${username} (had ${remainingTime} seconds remaining)`);
+    otpStorage.delete(username); // OTP is single-use
+    return true;
+  }
+  
+  console.log(`Invalid OTP provided for user: ${username}`);
+  return false;
 }
 
 /**
@@ -400,13 +443,24 @@ function authenticateSession(req, res, next) {
     const credentials = Buffer.from(authHeader.substring(6), 'base64').toString();
     const [username, password] = credentials.split(':');
 
-    // Validate against allowed credentials
+    // Validate against allowed credentials (static auth only for admin)
     const validCredentials = {
-      'testuser': 'testpass',
       'adminusr': 'adminpas'
     };
 
+    // Handle different authentication methods
+    let isAuthenticated = false;
+    
+    // Check static credentials (admin only)
     if (username && password && validCredentials[username] === password) {
+      isAuthenticated = true;
+    }
+    // Handle OTP authentication for testuser
+    else if (username === 'testuser' && password) {
+      isAuthenticated = validateOTP(username, password);
+    }
+    
+    if (isAuthenticated) {
       // Use a deterministic session ID based on username for testing/demo purposes
       // In production, you'd want proper session management with cookies/tokens
       const sessionId = crypto.createHash('md5').update(username).digest('hex').substring(0, 16).toUpperCase();
@@ -1024,6 +1078,95 @@ app.delete('/admin/ltpa-tokens', (req, res) => {
 });
 
 /**
+ * OTP Management Endpoints
+ */
+
+// Generate OTP for testuser
+app.post('/auth/generate-otp', (req, res) => {
+  const { username } = req.body;
+  
+  if (!username) {
+    return res.status(400).json({ error: 'Username is required' });
+  }
+  
+  if (username !== 'testuser') {
+    return res.status(403).json({ error: 'OTP is only available for testuser' });
+  }
+  
+  const otp = generateOTP(username);
+  
+  res.json({
+    message: `OTP generated for ${username}`,
+    otp: otp,
+    expiresIn: '5 minutes',
+    usage: `Use this OTP as the password with username '${username}' for authentication`
+  });
+});
+
+// Check OTP status for testuser
+app.get('/auth/otp-status/:username', (req, res) => {
+  const { username } = req.params;
+  
+  if (username !== 'testuser') {
+    return res.status(403).json({ error: 'OTP status is only available for testuser' });
+  }
+  
+  const stored = otpStorage.get(username);
+  
+  if (!stored) {
+    return res.json({ 
+      hasOTP: false, 
+      message: 'No active OTP for this user' 
+    });
+  }
+  
+  const isExpired = new Date() > stored.expiresAt;
+  
+  if (isExpired) {
+    otpStorage.delete(username); // Clean up expired OTP
+    return res.json({ 
+      hasOTP: false, 
+      message: 'OTP has expired' 
+    });
+  }
+  
+  const timeRemaining = Math.ceil((stored.expiresAt - new Date()) / 1000);
+  
+  res.json({
+    hasOTP: true,
+    expiresAt: stored.expiresAt.toISOString(),
+    timeRemainingSeconds: timeRemaining,
+    message: `OTP is valid for ${timeRemaining} more seconds`
+  });
+});
+
+// Admin endpoint to view all active OTPs
+app.get('/admin/otps', (req, res) => {
+  const otpList = Array.from(otpStorage.entries()).map(([username, data]) => ({
+    username,
+    expiresAt: data.expiresAt.toISOString(),
+    isExpired: new Date() > data.expiresAt,
+    timeRemainingSeconds: Math.max(0, Math.ceil((data.expiresAt - new Date()) / 1000))
+  }));
+  
+  res.json({
+    activeOTPs: otpList,
+    count: otpList.length
+  });
+});
+
+// Clear all OTPs (admin endpoint)
+app.delete('/admin/otps', (req, res) => {
+  const otpCount = otpStorage.size;
+  otpStorage.clear();
+  
+  res.json({
+    message: 'All OTPs cleared',
+    count: otpCount
+  });
+});
+
+/**
  * Error handling middleware
  */
 app.use((error, req, res, next) => {
@@ -1049,20 +1192,23 @@ app.listen(PORT, () => {
   console.log(`📊 Health check: http://localhost:${PORT}/health`);
   console.log(`🔧 Admin panel: http://localhost:${PORT}/admin/sessions`);
   console.log(`🔑 LtpaToken2 admin: http://localhost:${PORT}/admin/ltpa-tokens`);
+  console.log(`🔢 OTP management: http://localhost:${PORT}/admin/otps`);
   console.log(`📚 Example endpoint: http://localhost:${PORT}/${CMCI_CONSTANTS.CICS_SYSTEM_MANAGEMENT}/CICSManagedRegion`);
   console.log('');
   console.log('🔐 Authentication:');
-  console.log('  - Initial: Use Basic Auth (testuser:testpass or adminusr:adminpas)');
+  console.log('  - Admin: Use Basic Auth (adminusr:adminpas)');
+  console.log('  - testuser: Generate OTP via POST /auth/generate-otp, then use as password');
   console.log('  - Subsequent: Use LtpaToken2 header or cookie (automatically set)');
   console.log('📝 Query parameters:');
   console.log('  - count=N: Return N mock records');
   console.log('  - simulate=nodata: Return NODATA response');
-  console.log('  - cachetoken=TOKEN: Use existing cache token');
+
   console.log('  - nodiscard: Keep result set after request');
   console.log('  - summonly: Return summary only');
   console.log('  - index=N&count=M: Paginate cached results');
   console.log('  - orderby=FIELD: Sort cached results');
   console.log('📦 All responses now include automatic cache tokens!');
+  console.log('🔗 Use cache tokens via: /CICSResultCache/{token}[/{index}[/{count}]]');
   console.log('🍪 LtpaToken2 cookies are automatically set for authenticated sessions');
 });
 
