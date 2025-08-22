@@ -5,7 +5,7 @@
 
 /**
  * CICS CMCI Mock Server
- * 
+ *
  * This mock server simulates the CICS CMCI REST API for testing and development
  * purposes. It handles XML requests/responses and includes caching and authentication
  * mechanisms similar to a real CICS system.
@@ -197,14 +197,30 @@ function generateLtpaToken2() {
 
 /**
  * Generate a 6-digit OTP that expires in 5 minutes
+ * Reuses existing valid OTP if available
  */
 function generateOTP(username) {
+  // Check if there's already a valid OTP for this user
+  const existing = otpStorage.get(username);
+
+  if (existing && new Date() < existing.expiresAt) {
+    const remainingTime = Math.ceil((existing.expiresAt - new Date()) / 1000);
+    console.log(`Reusing existing OTP for ${username}: ${existing.otp} (${remainingTime} seconds remaining)`);
+    return existing.otp;
+  }
+
+  // Clean up expired OTP if it exists
+  if (existing) {
+    otpStorage.delete(username);
+  }
+
+  // Generate new OTP
   const otp = Math.floor(100000 + Math.random() * 900000).toString(); // 6-digit OTP
-  const expiresAt = new Date(Date.now() + 5 * 60 * 1000); // 5 minutes from now
-  
+  const expiresAt = new Date(Date.now() + 1 * 60 * 1000); // 1 minute from now
+
   otpStorage.set(username, { otp, expiresAt });
-  console.log(`Generated OTP for ${username}: ${otp} (valid for 5 minutes)`);
-  
+  console.log(`Generated new OTP for ${username}: ${otp} (valid for 1 minute)`);
+
   return otp;
 }
 
@@ -213,26 +229,28 @@ function generateOTP(username) {
  */
 function validateOTP(username, providedOTP) {
   const stored = otpStorage.get(username);
-  
+
   if (!stored) {
     console.log(`No OTP found for user: ${username}`);
     return false;
   }
-  
+
   if (new Date() > stored.expiresAt) {
     const expiredTime = Math.ceil((new Date() - stored.expiresAt) / 1000);
     console.log(`OTP expired for user: ${username} (expired ${expiredTime} seconds ago)`);
     otpStorage.delete(username); // Clean up expired OTP
     return false;
   }
-  
+
   if (stored.otp === providedOTP) {
     const remainingTime = Math.ceil((stored.expiresAt - new Date()) / 1000);
     console.log(`OTP validated successfully for user: ${username} (had ${remainingTime} seconds remaining)`);
-    otpStorage.delete(username); // OTP is single-use
+    // For now, we need to reuse the OTP for testing purposes
+    // TODO: Uncomment this when we want to use single-use OTPs
+    // otpStorage.delete(username); // OTP is single-use
     return true;
   }
-  
+
   console.log(`Invalid OTP provided for user: ${username}`);
   return false;
 }
@@ -413,17 +431,17 @@ function authenticateSession(req, res, next) {
   // Check for LtpaToken2 in headers or cookies first
   if (ltpaToken) {
     const sessionId = ltpaTokens.get(ltpaToken);
-    
+
     if (sessionId && sessions.has(sessionId)) {
       const session = sessions.get(sessionId);
       // Update last activity
       session.lastActivity = new Date();
       sessions.set(sessionId, session);
-      
+
       req.sessionId = sessionId;
       req.username = session.username;
       req.authenticatedViaToken = true;
-      
+
       console.log(`Authenticated user: ${session.username} with LtpaToken2 session: ${sessionId}`);
       return next();
     } else {
@@ -450,7 +468,7 @@ function authenticateSession(req, res, next) {
 
     // Handle different authentication methods
     let isAuthenticated = false;
-    
+
     // Check static credentials (admin only)
     if (username && password && validCredentials[username] === password) {
       isAuthenticated = true;
@@ -459,16 +477,16 @@ function authenticateSession(req, res, next) {
     else if (username === 'testuser' && password) {
       isAuthenticated = validateOTP(username, password);
     }
-    
+
     if (isAuthenticated) {
       // Use a deterministic session ID based on username for testing/demo purposes
       // In production, you'd want proper session management with cookies/tokens
       const sessionId = crypto.createHash('md5').update(username).digest('hex').substring(0, 16).toUpperCase();
-      
+
       // Check if session already exists and has a valid LtpaToken2
       let existingSession = sessions.get(sessionId);
       let ltpaToken2;
-      
+
       if (existingSession && existingSession.ltpaToken2) {
         // Reuse existing token
         ltpaToken2 = existingSession.ltpaToken2;
@@ -476,18 +494,18 @@ function authenticateSession(req, res, next) {
       } else {
         // Generate new LtpaToken2 for this session
         ltpaToken2 = generateLtpaToken2();
-        
+
         // Clean up any old tokens for this session
         if (existingSession && existingSession.ltpaToken2) {
           ltpaTokens.delete(existingSession.ltpaToken2);
         }
-        
+
         // Map the new LtpaToken2 to the session
         ltpaTokens.set(ltpaToken2, sessionId);
-        
+
         console.log(`Generated new LtpaToken2 for user: ${username} with session: ${sessionId}`);
       }
-      
+
       // Update session
       sessions.set(sessionId, {
         username,
@@ -507,7 +525,7 @@ function authenticateSession(req, res, next) {
         maxAge: 8 * 60 * 60 * 1000, // 8 hours (typical for LTPA tokens)
         sameSite: 'lax'
       });
-      
+
       return next();
     } else {
       // Invalid credentials provided (either missing username/password or wrong credentials)
@@ -650,7 +668,7 @@ app.get(`/${CMCI_CONSTANTS.CICS_SYSTEM_MANAGEMENT}/*`, authenticateSession, (req
   // Check if this is a cache request using provided cacheToken
   if (query.cachetoken || query.cacheToken) {
     const providedToken = query.cachetoken || query.cacheToken;
-    
+
     // First check retained result sets
     const retainedSet = retainedResultSets.get(providedToken);
     if (retainedSet) {
@@ -676,14 +694,14 @@ app.get(`/${CMCI_CONSTANTS.CICS_SYSTEM_MANAGEMENT}/*`, authenticateSession, (req
         // Continue to generate new response below
       } else {
         console.log(`💾 Cache hit for token: ${providedToken}`);
-        
+
         // Parse index and count from query params for cached results
         const index = parseInt(query.index || '1');
         const count = query.count ? parseInt(query.count) : null;
         const orderBy = query.orderby || query.ORDERBY;
-        
+
         const { records, displayedCount, totalCount } = retainedSet.getRecords(index, count, orderBy);
-        
+
         const resultSummary = {
           api_response1: CMCI_CONSTANTS.RESPONSE_CODES.OK,
           api_response2: CMCI_CONSTANTS.SUCCESS_RESPONSE_2,
@@ -721,7 +739,7 @@ app.get(`/${CMCI_CONSTANTS.CICS_SYSTEM_MANAGEMENT}/*`, authenticateSession, (req
         return res.set('Content-Type', 'application/xml').send(xmlResponse);
       }
     }
-    
+
     // Fall back to legacy cache for backward compatibility
     const cachedResult = cache.get(providedToken);
     if (cachedResult) {
@@ -772,11 +790,11 @@ app.get(`/${CMCI_CONSTANTS.CICS_SYSTEM_MANAGEMENT}/*`, authenticateSession, (req
       // Include other relevant query params that affect the result
       summonly: query.hasOwnProperty('SUMMONLY') || query.hasOwnProperty('summonly')
     });
-    
+
     // Look for existing cache entry for this exact request
     let existingToken = null;
     for (const [token, resultSet] of retainedResultSets.entries()) {
-      if (resultSet.sessionId === req.sessionId && 
+      if (resultSet.sessionId === req.sessionId &&
           resultSet.resourceType === resourceType &&
           JSON.stringify({
             resourceType: resultSet.resourceType,
@@ -789,7 +807,7 @@ app.get(`/${CMCI_CONSTANTS.CICS_SYSTEM_MANAGEMENT}/*`, authenticateSession, (req
         break;
       }
     }
-    
+
     if (existingToken) {
       // Reuse existing cache
       resultSummary.cachetoken = existingToken;
@@ -1062,7 +1080,7 @@ app.delete('/admin/sessions', (req, res) => {
 app.delete('/admin/ltpa-tokens', (req, res) => {
   const tokenCount = ltpaTokens.size;
   ltpaTokens.clear();
-  
+
   // Remove LtpaToken2 from session objects as well
   for (const [sessionId, session] of sessions.entries()) {
     if (session.ltpaToken2) {
@@ -1071,9 +1089,9 @@ app.delete('/admin/ltpa-tokens', (req, res) => {
     }
   }
 
-  res.json({ 
-    message: 'All LtpaToken2 mappings cleared', 
-    count: tokenCount 
+  res.json({
+    message: 'All LtpaToken2 mappings cleared',
+    count: tokenCount
   });
 });
 
@@ -1084,21 +1102,36 @@ app.delete('/admin/ltpa-tokens', (req, res) => {
 // Generate OTP for testuser
 app.post('/auth/generate-otp', (req, res) => {
   const { username } = req.body;
-  
+
   if (!username) {
     return res.status(400).json({ error: 'Username is required' });
   }
-  
+
   if (username !== 'testuser') {
     return res.status(403).json({ error: 'OTP is only available for testuser' });
   }
-  
+
+  // Check if reusing existing OTP
+  const existing = otpStorage.get(username);
+  const isReusing = existing && new Date() < existing.expiresAt;
+
   const otp = generateOTP(username);
-  
+
+  let message, expiresIn;
+  if (isReusing) {
+    const remainingTime = Math.ceil((existing.expiresAt - new Date()) / 1000);
+    message = `Reusing existing OTP for ${username}`;
+    expiresIn = `${Math.floor(remainingTime / 60)}m ${remainingTime % 60}s remaining`;
+  } else {
+    message = `New OTP generated for ${username}`;
+    expiresIn = '1 minute';
+  }
+
   res.json({
-    message: `OTP generated for ${username}`,
+    message: message,
     otp: otp,
-    expiresIn: '5 minutes',
+    expiresIn: expiresIn,
+    isReused: isReusing,
     usage: `Use this OTP as the password with username '${username}' for authentication`
   });
 });
@@ -1106,32 +1139,32 @@ app.post('/auth/generate-otp', (req, res) => {
 // Check OTP status for testuser
 app.get('/auth/otp-status/:username', (req, res) => {
   const { username } = req.params;
-  
+
   if (username !== 'testuser') {
     return res.status(403).json({ error: 'OTP status is only available for testuser' });
   }
-  
+
   const stored = otpStorage.get(username);
-  
+
   if (!stored) {
-    return res.json({ 
-      hasOTP: false, 
-      message: 'No active OTP for this user' 
+    return res.json({
+      hasOTP: false,
+      message: 'No active OTP for this user'
     });
   }
-  
+
   const isExpired = new Date() > stored.expiresAt;
-  
+
   if (isExpired) {
     otpStorage.delete(username); // Clean up expired OTP
-    return res.json({ 
-      hasOTP: false, 
-      message: 'OTP has expired' 
+    return res.json({
+      hasOTP: false,
+      message: 'OTP has expired'
     });
   }
-  
+
   const timeRemaining = Math.ceil((stored.expiresAt - new Date()) / 1000);
-  
+
   res.json({
     hasOTP: true,
     expiresAt: stored.expiresAt.toISOString(),
@@ -1148,7 +1181,7 @@ app.get('/admin/otps', (req, res) => {
     isExpired: new Date() > data.expiresAt,
     timeRemainingSeconds: Math.max(0, Math.ceil((data.expiresAt - new Date()) / 1000))
   }));
-  
+
   res.json({
     activeOTPs: otpList,
     count: otpList.length
@@ -1159,7 +1192,7 @@ app.get('/admin/otps', (req, res) => {
 app.delete('/admin/otps', (req, res) => {
   const otpCount = otpStorage.size;
   otpStorage.clear();
-  
+
   res.json({
     message: 'All OTPs cleared',
     count: otpCount

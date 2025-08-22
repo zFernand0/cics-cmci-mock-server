@@ -1,0 +1,214 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$version": "1.0",
+    "type": "object",
+    "description": "Zowe configuration",
+    "properties": {
+        "profiles": {
+            "type": "object",
+            "description": "Mapping of profile names to profile configurations",
+            "patternProperties": {
+                "^\\S*$": {
+                    "type": "object",
+                    "description": "Profile configuration object",
+                    "properties": {
+                        "type": {
+                            "description": "Profile type",
+                            "type": "string",
+                            "enum": [
+                                "cics",
+                                "base"
+                            ]
+                        },
+                        "properties": {
+                            "description": "Profile properties object",
+                            "type": "object"
+                        },
+                        "profiles": {
+                            "description": "Optional subprofile configurations",
+                            "type": "object",
+                            "$ref": "#/properties/profiles"
+                        },
+                        "secure": {
+                            "description": "Secure property names",
+                            "type": "array",
+                            "items": {
+                                "type": "string"
+                            },
+                            "uniqueItems": true
+                        }
+                    },
+                    "allOf": [
+                        {
+                            "if": {
+                                "properties": {
+                                    "type": false
+                                }
+                            },
+                            "then": {
+                                "properties": {
+                                    "properties": {
+                                        "title": "Missing profile type"
+                                    }
+                                }
+                            }
+                        },
+                        {
+                            "if": {
+                                "properties": {
+                                    "type": {
+                                        "const": "cics"
+                                    }
+                                }
+                            },
+                            "then": {
+                                "properties": {
+                                    "properties": {
+                                        "type": "object",
+                                        "title": "CICS Profile",
+                                        "description": "A cics profile is required to issue commands in the cics command group that interact with CICS regions. The cics profile contains your host, port, user name, and password for the IBM CICS management client interface (CMCI) server of your choice.",
+                                        "properties": {
+                                            "host": {
+                                                "type": "string",
+                                                "description": "The CMCI server host name"
+                                            },
+                                            "port": {
+                                                "type": "number",
+                                                "description": "The CMCI server port",
+                                                "default": 1490
+                                            },
+                                            "user": {
+                                                "type": "string",
+                                                "description": "Your username to connect to CICS"
+                                            },
+                                            "password": {
+                                                "type": "string",
+                                                "description": "Your password to connect to CICS"
+                                            },
+                                            "regionName": {
+                                                "type": "string",
+                                                "description": "The name of the CICS region name to interact with"
+                                            },
+                                            "cicsPlex": {
+                                                "type": "string",
+                                                "description": "The name of the CICSPlex to interact with"
+                                            },
+                                            "rejectUnauthorized": {
+                                                "type": "boolean",
+                                                "description": "Reject self-signed certificates.",
+                                                "default": true
+                                            },
+                                            "protocol": {
+                                                "type": "string",
+                                                "description": "Specifies CMCI protocol (http or https).",
+                                                "default": "https",
+                                                "enum": [
+                                                    "http",
+                                                    "https"
+                                                ]
+                                            }
+                                        },
+                                        "required": []
+                                    },
+                                    "secure": {
+                                        "items": {
+                                            "enum": [
+                                                "user",
+                                                "password"
+                                            ]
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        {
+                            "if": {
+                                "properties": {
+                                    "type": {
+                                        "const": "base"
+                                    }
+                                }
+                            },
+                            "then": {
+                                "properties": {
+                                    "properties": {
+                                        "type": "object",
+                                        "title": "Base Profile",
+                                        "description": "Base profile that stores values shared by multiple service profiles",
+                                        "properties": {
+                                            "host": {
+                                                "type": "string",
+                                                "description": "Host name of service on the mainframe."
+                                            },
+                                            "port": {
+                                                "type": "number",
+                                                "description": "Port number of service on the mainframe."
+                                            },
+                                            "user": {
+                                                "type": "string",
+                                                "description": "User name to authenticate to service on the mainframe."
+                                            },
+                                            "password": {
+                                                "type": "string",
+                                                "description": "Password to authenticate to service on the mainframe."
+                                            },
+                                            "rejectUnauthorized": {
+                                                "type": "boolean",
+                                                "description": "Reject self-signed certificates.",
+                                                "default": true
+                                            },
+                                            "tokenType": {
+                                                "type": "string",
+                                                "description": "The type of token to get and use for the API. Omit this option to use the default token type, which is provided by 'zowe auth login'."
+                                            },
+                                            "tokenValue": {
+                                                "type": "string",
+                                                "description": "The value of the token to pass to the API."
+                                            },
+                                            "certFile": {
+                                                "type": "string",
+                                                "description": "The file path to a certificate file to use for authentication.\n\nNote: The CLI does not support certificate files that require a password. For more information, search Troubleshooting PEM Certificates in Zowe Docs."
+                                            },
+                                            "certKeyFile": {
+                                                "type": "string",
+                                                "description": "The file path to a certificate key file to use for authentication"
+                                            }
+                                        },
+                                        "required": []
+                                    },
+                                    "secure": {
+                                        "items": {
+                                            "enum": [
+                                                "user",
+                                                "password",
+                                                "tokenValue"
+                                            ]
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        "defaults": {
+            "type": "object",
+            "description": "Mapping of profile types to default profile names",
+            "properties": {
+                "cics": {
+                    "description": "Default cics profile",
+                    "type": "string"
+                },
+                "base": {
+                    "description": "Default base profile",
+                    "type": "string"
+                }
+            }
+        },
+        "autoStore": {
+            "type": "boolean",
+            "description": "If true, values you enter when prompted are stored for future use"
+        }
+    }
+}

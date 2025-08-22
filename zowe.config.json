@@ -1,0 +1,38 @@
+{
+    "$schema": "./zowe.schema.json",
+    "profiles": {
+        "cics": {
+            "properties": {
+                "port": 9080
+            },
+            "profiles": {
+                "admin": {
+                    "type": "cics",
+                    "properties": {
+                        "user": "adminusr",
+                        "password": "adminpas"
+                    }
+                },
+                "user": {
+                    "type": "cics",
+                    "properties": {
+                        "user": "testuser",
+                    }
+                }
+            }
+        },
+        "project_base": {
+            "type": "base",
+            "properties": {
+                "host": "localhost",
+                "protocol": "http",
+                "rejectUnauthorized": false,
+            }
+        }
+    },
+    "defaults": {
+        "cics": "cics",
+        "base": "project_base"
+    },
+    "autoStore": false
+}
