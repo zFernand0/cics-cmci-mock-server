@@ -5,14 +5,20 @@
   "version": "0.2.0",
   "configurations": [
     {
+      // Run nodemon server.js
       "type": "node",
       "request": "launch",
-      "preLaunchTask": "npm: dev",
-      "name": "Launch CICS CMCI Mock Server",
+      "name": "Launch CICS CMCI Mock Server with Nodemon",
+      "runtimeExecutable": "nodemon",
       "skipFiles": [
         "<node_internals>/**"
-      ], 
-      "program": "${workspaceFolder}/server.js"
+      ],
+      "program": "${workspaceFolder}/server.js",
+      "console": "integratedTerminal",
+      "restart": true,
+      "env": {
+        "NODE_ENV": "development"
+      }
     }
   ]
 }
