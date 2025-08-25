@@ -31,7 +31,7 @@
         }
     },
     "defaults": {
-        "cics": "cics",
+        "cics": "cics.admin",
         "base": "project_base"
     },
     "autoStore": false

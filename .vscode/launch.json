@@ -7,10 +7,11 @@
     {
       "type": "node",
       "request": "launch",
+      "preLaunchTask": "npm: dev",
       "name": "Launch CICS CMCI Mock Server",
       "skipFiles": [
         "<node_internals>/**"
-      ],
+      ], 
       "program": "${workspaceFolder}/server.js"
     }
   ]

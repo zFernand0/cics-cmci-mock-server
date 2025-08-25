@@ -651,19 +651,19 @@ app.get(`/${CMCI_CONSTANTS.CICS_SYSTEM_MANAGEMENT}/*`, authenticateSession, (req
     return res.status(400).set('Content-Type', 'application/xml').send(errorResponse);
   }
 
-  // Skip CICSResultCache - handled by dedicated endpoint
-  if (resourceType === 'cicsresultcache') {
-    return res.status(400).set('Content-Type', 'application/xml').send(
-      createXMLResponse({
-        api_function: 'GET',
-        api_response1: CMCI_CONSTANTS.RESPONSE_CODES.INVALIDPARM,
-        api_response2: CMCI_CONSTANTS.SUCCESS_RESPONSE_2,
-        api_response1_alt: 'INVALIDPARM',
-        api_response2_alt: 'Use CICSResultCache/{token} format',
-        recordcount: '0'
-      })
-    );
-  }
+  // TODO: Uncomment this once the real CMCI (and the CICS VSCE) stop handling cache-misses
+  // if (resourceType === 'cicsresultcache') {
+  //   return res.status(404).set('Content-Type', 'application/xml').send(
+  //     createXMLResponse({
+  //       api_function: 'GET',
+  //       api_response1: CMCI_CONSTANTS.RESPONSE_CODES.NOTAVAILABLE,
+  //       api_response2: CMCI_CONSTANTS.SUCCESS_RESPONSE_2,
+  //       api_response1_alt: 'NOTAVAILABLE',
+  //       api_response2_alt: 'The result cache token could not be found',
+  //       recordcount: '0'
+  //     })
+  //   );
+  // }
 
   // Check if this is a cache request using provided cacheToken
   if (query.cachetoken || query.cacheToken) {
@@ -766,7 +766,7 @@ app.get(`/${CMCI_CONSTANTS.CICS_SYSTEM_MANAGEMENT}/*`, authenticateSession, (req
   }
 
   // Generate mock data - use larger dataset for better caching demonstration
-  const recordCount = parseInt(query.count || '10');
+  const recordCount = parseInt(query.count || '3');
   const mockRecords = generateMockData(resourceType, recordCount);
 
   const resultSummary = {
@@ -785,7 +785,7 @@ app.get(`/${CMCI_CONSTANTS.CICS_SYSTEM_MANAGEMENT}/*`, authenticateSession, (req
     const requestKey = JSON.stringify({
       resourceType,
       sessionId: req.sessionId,
-      count: query.count || '10',
+      count: query.count || '3',
       simulate: query.simulate,
       // Include other relevant query params that affect the result
       summonly: query.hasOwnProperty('SUMMONLY') || query.hasOwnProperty('summonly')
@@ -799,7 +799,7 @@ app.get(`/${CMCI_CONSTANTS.CICS_SYSTEM_MANAGEMENT}/*`, authenticateSession, (req
           JSON.stringify({
             resourceType: resultSet.resourceType,
             sessionId: resultSet.sessionId,
-            count: resultSet.query.count || '10',
+            count: resultSet.query.count || '3',
             simulate: resultSet.query.simulate,
             summonly: resultSet.query.hasOwnProperty('SUMMONLY') || resultSet.query.hasOwnProperty('summonly')
           }) === requestKey) {
