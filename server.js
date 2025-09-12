@@ -427,6 +427,10 @@ function generateMockData(resourceType, count = 1) {
 function authenticateSession(req, res, next) {
   const authHeader = req.headers.authorization;
   const ltpaToken = req.headers.ltpatoken2 || req.headers.LtpaToken2 || req.cookies.LtpaToken2;
+  console.log('authHeader', authHeader);
+  console.log('ltpaToken', ltpaToken);
+  console.log('req.headers', JSON.stringify(req.headers, null, 2));
+  console.log('req.cookies', JSON.stringify(req.cookies, null, 2));
 
   // Check for LtpaToken2 in headers or cookies first
   if (ltpaToken) {
@@ -446,7 +450,8 @@ function authenticateSession(req, res, next) {
       return next();
     } else {
       console.log(`Invalid or expired LtpaToken2: ${ltpaToken}`);
-      return res.status(401).json({ error: 'Invalid or expired LtpaToken2' });
+      if (!authHeader)
+        return res.status(401).json({ error: 'Invalid or expired LtpaToken2' });
     }
   }
 
