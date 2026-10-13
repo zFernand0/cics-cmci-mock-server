@@ -1,0 +1,36 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2025 Fernando Rijo Cedeno
+
+name: Feature request
+description: Propose a new capability or improvement to the CMCI mock server.
+title: "[Feature]: "
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or use case
+      description: Describe the client development or testing workflow this would improve.
+    validations:
+      required: true
+  - type: textarea
+    id: proposed_behavior
+    attributes:
+      label: Proposed behavior
+      description: Describe what the server should do. Include affected resources, attributes, parameters, or configuration options.
+    validations:
+      required: true
+  - type: textarea
+    id: examples
+    attributes:
+      label: Examples and references
+      description: Include example requests, expected XML responses, or relevant IBM and Zowe documentation.
+  - type: textarea
+    id: acceptance_criteria
+    attributes:
+      label: How to verify it works
+      description: Describe the observable results or client scenarios that would demonstrate the feature is complete.
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Describe any existing fixtures, configuration, or workarounds and why they do not meet the need.
