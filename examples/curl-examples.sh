@@ -6,7 +6,9 @@
 # CICS CMCI Mock Server - cURL Examples
 # This script demonstrates various ways to interact with the mock server
 
-BASE_URL="http://localhost:9080"
+BASE_URL="${MOCK_SERVER_URL:-http://127.0.0.1:9080}"
+HEADERS_FILE=$(mktemp)
+trap 'rm -f "$HEADERS_FILE"' EXIT
 ADMIN_AUTH="Authorization: Basic $(echo -n 'adminusr:adminpas' | base64)"
 
 echo "🚀 CICS CMCI Mock Server - cURL Examples"
@@ -45,11 +47,11 @@ echo ""
 
 echo "Step 3: Authenticate with OTP and capture LTPA token"
 TESTUSER_AUTH="Authorization: Basic $(echo -n "testuser:$OTP" | base64)"
-AUTH_RESPONSE=$(curl -s -H "$TESTUSER_AUTH" -D /tmp/headers.txt \
+AUTH_RESPONSE=$(curl -s -H "$TESTUSER_AUTH" -D "$HEADERS_FILE" \
   "$BASE_URL/CICSSystemManagement/CICSManagedRegion?count=1")
 
 # Extract LTPA token from Set-Cookie header
-LTPA_TOKEN=$(grep -i 'set-cookie.*ltpatoken2' /tmp/headers.txt | sed 's/.*LtpaToken2=\([^;]*\).*/\1/')
+LTPA_TOKEN=$(grep -i 'set-cookie.*ltpatoken2' "$HEADERS_FILE" | sed 's/.*LtpaToken2=\([^;]*\).*/\1/')
 echo "LTPA Token captured: ${LTPA_TOKEN:0:20}..."
 echo ""
 
@@ -148,23 +150,23 @@ echo "🔧 Admin Endpoints:"
 echo "=================="
 
 echo "Sessions:"
-curl -s "$BASE_URL/admin/sessions" | jq '.'
+curl -s -u "adminusr:adminpas" "$BASE_URL/admin/sessions" | jq '.'
 echo ""
 
 echo "LTPA Tokens:"
-curl -s "$BASE_URL/admin/ltpa-tokens" | jq '.'
+curl -s -u "adminusr:adminpas" "$BASE_URL/admin/ltpa-tokens" | jq '.'
 echo ""
 
 echo "Active OTPs:"
-curl -s "$BASE_URL/admin/otps" | jq '.'
+curl -s -u "adminusr:adminpas" "$BASE_URL/admin/otps" | jq '.'
 echo ""
 
 echo "Cache Status:"
-curl -s "$BASE_URL/admin/cache" | jq '.'
+curl -s -u "adminusr:adminpas" "$BASE_URL/admin/cache" | jq '.'
 echo ""
 
 echo "Retained Result Sets:"
-curl -s "$BASE_URL/admin/retained-results" | jq '.'
+curl -s -u "adminusr:adminpas" "$BASE_URL/admin/retained-results" | jq '.'
 echo ""
 
 echo "📚 Different Resource Types:"
@@ -189,7 +191,7 @@ echo "..."
 echo ""
 
 # Clean up temp files
-rm -f /tmp/headers.txt
+rm -f "$HEADERS_FILE"
 
 echo "✅ All examples completed!"
 echo ""

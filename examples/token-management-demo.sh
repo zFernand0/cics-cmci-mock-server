@@ -5,7 +5,10 @@
 # LTPA Token Management Demo
 # This script demonstrates LTPA token management and admin capabilities
 
-BASE_URL="http://localhost:9080"
+BASE_URL="${MOCK_SERVER_URL:-http://127.0.0.1:9080}"
+ADMIN_HEADERS=$(mktemp)
+TESTUSER_HEADERS=$(mktemp)
+trap 'rm -f "$ADMIN_HEADERS" "$TESTUSER_HEADERS"' EXIT
 ADMIN_AUTH="Authorization: Basic $(echo -n 'adminusr:adminpas' | base64)"
 
 echo "🔑 CICS CMCI Mock Server - LTPA Token Management Demo"
@@ -23,6 +26,7 @@ print_success() {
 
 print_error() {
     echo -e "\033[1;31m❌ $1\033[0m"
+    exit 1
 }
 
 print_info() {
@@ -33,12 +37,12 @@ print_info() {
 print_step "Step 1: Check initial token and session state"
 
 echo "Active sessions:"
-INITIAL_SESSIONS=$(curl -s "$BASE_URL/admin/sessions")
+INITIAL_SESSIONS=$(curl -s -u "adminusr:adminpas" "$BASE_URL/admin/sessions")
 echo "$INITIAL_SESSIONS" | jq '.'
 echo ""
 
 echo "Active LTPA tokens:"
-INITIAL_TOKENS=$(curl -s "$BASE_URL/admin/ltpa-tokens")
+INITIAL_TOKENS=$(curl -s -u "adminusr:adminpas" "$BASE_URL/admin/ltpa-tokens")
 echo "$INITIAL_TOKENS" | jq '.'
 echo ""
 
@@ -46,7 +50,6 @@ echo ""
 print_step "Step 2: Create authenticated sessions for both users"
 
 echo "2.1 - Admin authentication:"
-ADMIN_HEADERS="/tmp/admin_headers.txt"
 ADMIN_RESPONSE=$(curl -s -H "$ADMIN_AUTH" -D "$ADMIN_HEADERS" \
   "$BASE_URL/CICSSystemManagement/CICSManagedRegion?count=1")
 
@@ -74,7 +77,6 @@ if [ "$OTP" != "null" ] && [ ! -z "$OTP" ]; then
     print_success "OTP generated for testuser: $OTP"
     
     # Authenticate testuser with OTP
-    TESTUSER_HEADERS="/tmp/testuser_headers.txt"
     TESTUSER_RESPONSE=$(curl -s -u "testuser:$OTP" -D "$TESTUSER_HEADERS" \
       "$BASE_URL/CICSSystemManagement/CICSCICSPlex?count=1")
     
@@ -98,12 +100,12 @@ echo ""
 print_step "Step 3: Monitor active tokens and sessions after authentication"
 
 echo "Updated sessions:"
-UPDATED_SESSIONS=$(curl -s "$BASE_URL/admin/sessions")
+UPDATED_SESSIONS=$(curl -s -u "adminusr:adminpas" "$BASE_URL/admin/sessions")
 echo "$UPDATED_SESSIONS" | jq '.'
 echo ""
 
 echo "Updated LTPA tokens:"
-UPDATED_TOKENS=$(curl -s "$BASE_URL/admin/ltpa-tokens")
+UPDATED_TOKENS=$(curl -s -u "adminusr:adminpas" "$BASE_URL/admin/ltpa-tokens")
 echo "$UPDATED_TOKENS" | jq '.'
 echo ""
 
@@ -142,7 +144,7 @@ fi
 print_step "Step 5: Demonstrate token management capabilities"
 
 echo "5.1 - Current token count:"
-TOKEN_COUNT=$(curl -s "$BASE_URL/admin/ltpa-tokens" | jq '.tokens | length')
+TOKEN_COUNT=$(curl -s -u "adminusr:adminpas" "$BASE_URL/admin/ltpa-tokens" | jq '.count')
 print_info "Active tokens: $TOKEN_COUNT"
 echo ""
 
@@ -162,15 +164,15 @@ echo ""
 print_step "Step 6: Demonstrate selective token management"
 
 echo "6.1 - Clear all LTPA tokens:"
-CLEAR_RESPONSE=$(curl -s -X DELETE "$BASE_URL/admin/ltpa-tokens")
+CLEAR_RESPONSE=$(curl -s -u "adminusr:adminpas" -X DELETE "$BASE_URL/admin/ltpa-tokens")
 echo "$CLEAR_RESPONSE" | jq '.'
 echo ""
 
-echo "6.2 - Verify tokens are cleared:"
-CLEARED_TOKENS=$(curl -s "$BASE_URL/admin/ltpa-tokens")
+echo "6.2 - Verify tokens are cleared without authenticating again:"
+CLEARED_TOKENS=$(curl -s "$BASE_URL/health")
 echo "$CLEARED_TOKENS" | jq '.'
 
-CLEARED_COUNT=$(echo "$CLEARED_TOKENS" | jq '.tokens | length')
+CLEARED_COUNT=$(echo "$CLEARED_TOKENS" | jq '.ltpaTokens')
 if [ "$CLEARED_COUNT" = "0" ]; then
     print_success "All LTPA tokens cleared successfully"
 else
@@ -195,17 +197,17 @@ echo ""
 print_step "Step 7: Demonstrate session management"
 
 echo "7.1 - Current sessions:"
-CURRENT_SESSIONS=$(curl -s "$BASE_URL/admin/sessions")
+CURRENT_SESSIONS=$(curl -s -u "adminusr:adminpas" "$BASE_URL/admin/sessions")
 echo "$CURRENT_SESSIONS" | jq '.'
 echo ""
 
 echo "7.2 - Clear all sessions:"
-SESSION_CLEAR_RESPONSE=$(curl -s -X DELETE "$BASE_URL/admin/sessions")
+SESSION_CLEAR_RESPONSE=$(curl -s -u "adminusr:adminpas" -X DELETE "$BASE_URL/admin/sessions")
 echo "$SESSION_CLEAR_RESPONSE" | jq '.'
 echo ""
 
-echo "7.3 - Verify sessions are cleared:"
-FINAL_SESSIONS=$(curl -s "$BASE_URL/admin/sessions")
+echo "7.3 - Verify sessions are cleared without authenticating again:"
+FINAL_SESSIONS=$(curl -s "$BASE_URL/health")
 echo "$FINAL_SESSIONS" | jq '.'
 echo ""
 
@@ -244,7 +246,7 @@ fi
 echo ""
 
 # Cleanup temp files
-rm -f /tmp/admin_headers.txt /tmp/testuser_headers.txt
+rm -f "$ADMIN_HEADERS" "$TESTUSER_HEADERS"
 
 print_step "🎯 Token Management Demo Summary"
 echo "================================"

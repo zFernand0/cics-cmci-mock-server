@@ -267,12 +267,15 @@ function main() {
   console.log(`⏱️  Duration: ${duration}s`);
   
   if (results.errors.length > 0) {
+    process.exitCode = 1;
     console.log('');
     console.log('❌ Errors:');
     results.errors.forEach(({ file, error }) => {
       console.log(`  ${file}: ${error}`);
     });
   }
+
+  if (dryRun && results.processed.length > 0) process.exitCode = 1;
   
   if (dryRun && results.skipped.length === 0 && results.processed.length === 0) {
     console.log('');
