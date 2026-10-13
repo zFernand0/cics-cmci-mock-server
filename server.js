@@ -216,10 +216,10 @@ function generateOTP(username) {
 
   // Generate new OTP
   const otp = Math.floor(100000 + Math.random() * 900000).toString(); // 6-digit OTP
-  const expiresAt = new Date(Date.now() + 1 * 60 * 1000); // 1 minute from now
+  const expiresAt = new Date(Date.now() + 0.25 * 60 * 1000); // 1 minute from now
 
   otpStorage.set(username, { otp, expiresAt });
-  console.log(`Generated new OTP for ${username}: ${otp} (valid for 1 minute)`);
+  console.log(`Generated new OTP for ${username}: ${otp} (valid for 15 seconds)`);
 
   return otp;
 }
@@ -1129,7 +1129,7 @@ app.post('/auth/generate-otp', (req, res) => {
     expiresIn = `${Math.floor(remainingTime / 60)}m ${remainingTime % 60}s remaining`;
   } else {
     message = `New OTP generated for ${username}`;
-    expiresIn = '1 minute';
+    expiresIn = '15 seconds';
   }
 
   res.json({
