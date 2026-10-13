@@ -146,7 +146,18 @@ Fixtures are cloned on creation and use plain attribute objects with scalar valu
 
 ## Supported resources and current limits
 
-See `RESOURCE_TYPES` in [src/resources.js](src/resources.js) for the complete list, including programs, definitions, transactions, regions, plexes, bundles, files, URI maps, libraries, pipelines, JVM servers, CSD groups, tasks, and retained results. Unknown resource names return 404. Programs, managed regions, and plexes have dedicated templates; other types have generic `name`/`status` records unless you supply fixtures.
+See `RESOURCE_TYPES` in [src/resources.js](src/resources.js) for the complete list, including programs, definitions, transactions, regions, plexes, bundles, files, URI maps, libraries, pipelines, JVM servers and endpoints, temporary storage queues, CSD groups, tasks, and retained results. All 17 names in the [Zowe client resource enum](https://github.com/zowe/cics-for-zowe-client/blob/main/packages/vsce-api/src/resources/ResourceTypes.ts) have endpoints. Unknown resource names return 404.
+
+Programs, managed regions, plexes, remote files, JVM endpoints, and both temporary storage queue types have dedicated templates. Other types have generic `name`/`status` records unless you supply fixtures. The following templates provide the fields required by the corresponding Zowe resource interfaces:
+
+| Resource | Representative attributes |
+| --- | --- |
+| [CICSRemoteFile](https://www.ibm.com/docs/en/cics-ts/6.x?topic=tables-remfile-resource-table) | `file`, `remotename`, `remotesystem`, `enablestatus` |
+| [CICSJVMEndpoint](https://www.ibm.com/docs/en/cics-ts/6.x?topic=tables-endpoint-resource-table) | `jvmendpoint`, `jvmserver`, `host`, `port`, `secport`, `enablestatus`, `type` |
+| [CICSTSQueue](https://www.ibm.com/docs/en/cics-ts/6.x?topic=tables-tsqname-resource-table) | `name`, `hexname`, `location`, `numitems`, `quelength`, `expiryint`, `transid`, `tsmodel` |
+| [CICSSharedTSQueue](https://www.ibm.com/docs/en/cics-ts/5.5.0?topic=tables-tsqshr-resource-table) | `name`, `poolname`, `hexname`, `location`, `numitems`, `quelength` |
+
+These four templates include `eyu_cicsname="REGION1"` and deterministic identities. JVM endpoints include both identity fields, `jvmendpoint` and `jvmserver`; shared queues include `name` and `poolname`. Queue `hexname` values encode the 16-byte, space-padded EBCDIC name. They support the same authentication, fixtures, sorting, retained-result pagination, and stateless write acknowledgements as the other resource endpoints.
 
 Context/scope path segments are accepted and separate cache identity. They do not filter generated records. `CRITERIA` filtering, resource persistence, resource-specific actions, full IBM schema validation, and the CMCI schema endpoint are not implemented. SDK/extension integration should verify the fields it consumes with custom fixtures.
 

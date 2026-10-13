@@ -20,6 +20,7 @@ const RESOURCE_TYPES = {
   'cicspipeline': 'CICSPipeline',
   'cicswebservice': 'CICSWebService',
   'cicsjvmserver': 'CICSJVMServer',
+  'cicsjvmendpoint': 'CICSJVMEndpoint',
   'cicsurimap': 'CICSURIMap',
   'cicsregiongroup': 'CICSRegionGroup',
   'cicscsdgroup': 'CICSCSDGroup',
@@ -29,8 +30,11 @@ const RESOURCE_TYPES = {
   'cicsbundle': 'CICSBundle',
   'cicsbundlepart': 'CICSBundlePart',
   'cicslocalfile': 'CICSLocalFile',
+  'cicsremotefile': 'CICSRemoteFile',
   'cicslocaltransaction': 'CICSLocalTransaction',
-  'cicsremotetransaction': 'CICSRemoteTransaction'
+  'cicsremotetransaction': 'CICSRemoteTransaction',
+  'cicstsqueue': 'CICSTSQueue',
+  'cicssharedtsqueue': 'CICSSharedTSQueue'
 };
 
 // Stable identities make fixtures and pagination assertions reproducible.
@@ -147,6 +151,73 @@ function generateMockData(resourceType, count = 1) {
           }
         };
         break;
+
+      case 'cicsremotefile':
+        record = {
+          $: {
+            _keydata: keyData(resourceType, i),
+            eyu_cicsname: 'REGION1',
+            eyu_cicsrel: 'E740',
+            file: `REM${String(i + 1).padStart(5, '0')}`,
+            enablestatus: 'ENABLED',
+            remotename: `LOC${String(i + 1).padStart(5, '0')}`,
+            remotesystem: 'REG1',
+            keylength: '8',
+            addcnt: '0',
+            browsecnt: '0',
+            getcnt: '0',
+            getupdcnt: '0',
+            remdelcnt: '0',
+            updatecnt: '0'
+          }
+        };
+        break;
+
+      case 'cicsjvmendpoint':
+        record = {
+          $: {
+            _keydata: keyData(resourceType, i),
+            eyu_cicsname: 'REGION1',
+            eyu_cicsrel: 'E740',
+            jvmendpoint: `httpEndpoint${String(i + 1).padStart(5, '0')}`,
+            jvmserver: 'JVM00001',
+            enablestatus: 'ENABLED',
+            host: '127.0.0.1',
+            port: '9080',
+            secport: '9443',
+            type: 'com.ibm.ws.http'
+          }
+        };
+        break;
+
+      case 'cicstsqueue':
+      case 'cicssharedtsqueue': {
+        const shared = resourceType === 'cicssharedtsqueue';
+        const suffix = String(i + 1).padStart(5, '0');
+        // HEXNAME contains the 16-byte, space-padded EBCDIC queue name.
+        const hexPrefix = shared ? 'E2C8D9E3E2D8' : 'E3E2D8';
+        const hexSuffix = suffix.replace(/\d/g, digit => `F${digit}`);
+        record = {
+          $: {
+            _keydata: keyData(resourceType, i),
+            eyu_cicsname: 'REGION1',
+            eyu_cicsrel: 'E740',
+            name: `${shared ? 'SHRTSQ' : 'TSQ'}${suffix}`,
+            hexname: `${hexPrefix}${hexSuffix}`.padEnd(32, '40'),
+            location: shared ? 'AUXILIARY' : 'MAIN',
+            numitems: '3',
+            quelength: '240',
+            minitemlen: '80',
+            maxitemlen: '80',
+            recovstatus: 'NOTRECOVABLE',
+            expiryint: '0',
+            expiryintmin: '0',
+            lastusedint: '0',
+            ...(shared ? { poolname: 'POOL1' } : { transid: 'TRN1', tsmodel: 'TSMODEL1' })
+          }
+        };
+        break;
+      }
 
       default:
         record = {

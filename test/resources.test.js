@@ -9,6 +9,14 @@ const { setup, records } = require('./helpers');
 const { RESOURCE_TYPES } = require('../src/resources');
 const path = '/CICSSystemManagement/CICSProgram';
 
+// Required fields from the Zowe vsce-api resource interfaces, including IResource.
+const addedResources = [
+  { name: 'CICSRemoteFile', identity: 'file', fields: ['file', 'remotename', 'remotesystem', 'enablestatus'] },
+  { name: 'CICSJVMEndpoint', identity: 'jvmendpoint', fields: ['jvmendpoint', 'jvmserver', 'port', 'secport', 'enablestatus'] },
+  { name: 'CICSTSQueue', identity: 'name', fields: ['name', 'location', 'numitems', 'hexname', 'quelength', 'expiryint', 'transid', 'tsmodel'] },
+  { name: 'CICSSharedTSQueue', identity: 'name', fields: ['name', 'poolname', 'location', 'hexname'] }
+];
+
 for (const [type, name] of Object.entries(RESOURCE_TYPES).filter(([type]) => type !== 'cicsresultcache')) {
   test(`returns parseable XML and stable identities for ${name}`, async t => {
     const { request } = await setup(t);
@@ -22,6 +30,100 @@ for (const [type, name] of Object.entries(RESOURCE_TYPES).filter(([type]) => typ
     assert.ok(records(response, type).every(record => /^[A-F0-9]+$/.test(record._keydata)));
   });
 }
+
+for (const { name, identity, fields } of addedResources) {
+  const type = name.toLowerCase();
+  const resourcePath = `/CICSSystemManagement/${name}`;
+
+  test(`${name} returns the fields required by Zowe with stable resource identities`, async t => {
+    const { request } = await setup(t);
+    assert.equal((await request(resourcePath, { auth: null })).status, 401);
+    const response = await request(`${resourcePath}?count=3`);
+    assert.equal(response.status, 200);
+    assert.equal(response.summary.displayed_recordcount, '3');
+    const data = records(response, type);
+    assert.equal(data.length, 3);
+    for (const record of data) {
+      for (const field of ['eyu_cicsname', ...fields]) {
+        assert.equal(typeof record[field], 'string', `${name}.${field} must be an XML attribute`);
+        assert.ok(record[field].length, `${name}.${field} must not be empty`);
+      }
+      if (name === 'CICSRemoteFile') {
+        assert.ok(record.file.length <= 8);
+        assert.ok(record.remotename.length <= 8);
+        assert.ok(record.remotesystem.length <= 4);
+        assert.ok(['ENABLED', 'DISABLED', 'UNENABLED', 'DISABLING', 'NOTAPPLIC'].includes(record.enablestatus));
+      } else if (name === 'CICSJVMEndpoint') {
+        assert.ok(record.jvmendpoint.length <= 224);
+        assert.ok(record.jvmserver.length <= 8);
+        assert.ok(['ENABLED', 'DISABLED'].includes(record.enablestatus));
+        for (const field of ['port', 'secport']) {
+          assert.match(record[field], /^\d+$/);
+          assert.ok(Number(record[field]) >= 1 && Number(record[field]) <= 65535);
+        }
+      } else {
+        assert.ok(record.name.length <= 16);
+        assert.match(record.hexname, /^[A-F0-9]{32}$/);
+        assert.ok(['MAIN', 'AUXILIARY'].includes(record.location));
+      }
+    }
+    // Known EBCDIC encodings verify HEXNAME represents NAME, including space padding.
+    if (name === 'CICSTSQueue') {
+      assert.equal(data[0].name, 'TSQ00001');
+      assert.equal(data[0].hexname, 'E3E2D8F0F0F0F0F14040404040404040');
+    } else if (name === 'CICSSharedTSQueue') {
+      assert.equal(data[0].name, 'SHRTSQ00001');
+      assert.equal(data[0].hexname, 'E2C8D9E3E2D8F0F0F0F0F14040404040');
+      assert.ok(data.every(record => record.poolname.length <= 8));
+    }
+    assert.equal(new Set(data.map(record => record[identity])).size, 3);
+    assert.equal(new Set(data.map(record => record._keydata)).size, 3);
+    const repeated = await request(`${resourcePath}?count=3`);
+    assert.deepEqual(records(repeated, type), data);
+    assert.equal(repeated.summary.cachetoken, response.summary.cachetoken);
+    const page = await request(`/CICSSystemManagement/CICSResultCache/${response.summary.cachetoken}/2/1?NODISCARD`);
+    assert.deepEqual(records(page, type), [data[1]]);
+  });
+
+  test(`${name} accepts custom fixtures, scoped paths, sorting and both cache pagination forms`, async t => {
+    const fixture = ['A', 'C', 'B'].map(value => ({ [identity]: value, eyu_cicsname: 'TESTREG' }));
+    const { request } = await setup(t, { fixtures: { [name]: fixture } });
+    const scopedPath = `${resourcePath.toUpperCase()}/PLEX1/TESTREG`;
+    const response = await request(`${scopedPath}?ORDERBY=${identity}/D&NODISCARD`);
+    assert.equal(response.status, 200);
+    assert.equal(response.summary.recordcount, '3');
+    const data = records(response, type);
+    assert.deepEqual(data.map(record => record[identity]), ['C', 'B', 'A']);
+    assert.ok(data.every(record => record.eyu_cicsname === 'TESTREG'));
+    const token = response.summary.cachetoken;
+    const page = await request(`/CICSSystemManagement/CICSResultCache/${token}/2/1?NODISCARD&ORDERBY=${identity}/D`);
+    assert.deepEqual(records(page, type), [data[1]]);
+    const queryPage = await request(`${scopedPath.toLowerCase()}?cachetoken=${token}&index=3&count=1&NODISCARD&ORDERBY=${identity}/D`);
+    assert.deepEqual(records(queryPage, type), [data[2]]);
+    const capped = await request(`${scopedPath}?count=2&ORDERBY=${identity}/D`);
+    assert.equal(capped.summary.recordcount, '2');
+    assert.deepEqual(records(capped, type).map(record => record[identity]), ['C', 'A']);
+  });
+}
+
+test('new resource endpoints use the existing stateless write acknowledgements', async t => {
+  const { request } = await setup(t);
+  for (const { name } of addedResources) {
+    const resourcePath = `/CICSSystemManagement/${name}`;
+    const initial = await request(`${resourcePath}?count=1`);
+    for (const method of ['POST', 'PUT', 'DELETE']) {
+      const response = await request(resourcePath, method === 'POST'
+        ? { method, headers: { 'Content-Type': 'application/xml' }, body: '<request/>' }
+        : { method });
+      assert.equal(response.status, 200, `${method} ${name}`);
+      assert.equal(response.summary.api_function, method);
+      assert.equal(response.summary.api_response1_alt, 'OK');
+      assert.equal(response.summary.displayed_recordcount, '0');
+    }
+    const after = await request(`${resourcePath}?count=1`);
+    assert.deepEqual(records(after, name.toLowerCase()), records(initial, name.toLowerCase()));
+  }
+});
 
 test('program resources have program attributes and a single record is valid XML', async t => {
   const { request, url } = await setup(t);
