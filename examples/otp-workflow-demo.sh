@@ -5,7 +5,7 @@
 # OTP Authentication Workflow Demo
 # This script demonstrates the complete OTP authentication flow for testuser
 
-BASE_URL="http://localhost:9080"
+BASE_URL="${MOCK_SERVER_URL:-http://127.0.0.1:9080}"
 
 echo "🔢 CICS CMCI Mock Server - OTP Authentication Demo"
 echo "=================================================="
@@ -22,6 +22,7 @@ print_success() {
 
 print_error() {
     echo -e "\033[1;31m❌ $1\033[0m"
+    exit 1
 }
 
 print_info() {
@@ -72,7 +73,8 @@ print_step "Step 4: Authenticate with OTP (capture response headers)"
 echo "Using credentials: testuser:$OTP"
 
 # Save headers to temp file and test authentication
-TEMP_HEADERS="/tmp/otp_demo_headers.txt"
+TEMP_HEADERS=$(mktemp)
+trap 'rm -f "$TEMP_HEADERS"' EXIT
 AUTH_RESPONSE=$(curl -s -u "testuser:$OTP" -D "$TEMP_HEADERS" \
   "$BASE_URL/CICSSystemManagement/CICSManagedRegion?count=1")
 
@@ -164,15 +166,15 @@ echo ""
 print_step "Step 9: Check admin endpoints for monitoring"
 
 echo "Active sessions:"
-curl -s "$BASE_URL/admin/sessions" | jq '.'
+curl -s -u "adminusr:adminpas" "$BASE_URL/admin/sessions" | jq '.'
 echo ""
 
 echo "Active LTPA tokens:"
-curl -s "$BASE_URL/admin/ltpa-tokens" | jq '.'
+curl -s -u "adminusr:adminpas" "$BASE_URL/admin/ltpa-tokens" | jq '.'
 echo ""
 
 echo "Active OTPs:"
-curl -s "$BASE_URL/admin/otps" | jq '.'
+curl -s -u "adminusr:adminpas" "$BASE_URL/admin/otps" | jq '.'
 echo ""
 
 # Cleanup

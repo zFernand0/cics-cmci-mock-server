@@ -5,468 +5,237 @@ Copyright 2025 Fernando Rijo Cedeno
 
 # CICS CMCI Mock Server
 
-A Node.js mock server that simulates the CICS CMCI (Customer Information Control System - CICSPlex System Manager Configuration Interface) REST API for testing and development of the CICS VSCode extension.
+A local Node.js server for developing and testing CICS clients without a mainframe. It provides CMCI XML responses, Basic/OTP authentication, mock LtpaToken2 cookies, retained result sets, pagination, sorting, and error scenarios.
 
-## Features
+## Start and test
 
-- ✅ **XML Request/Response Handling**: Fully supports XML-based communication as expected by the CICS SDK
-- ✅ **Multi-Method Authentication**: Admin static credentials, testuser OTP authentication, and LtpaToken2 cookie support
-- ✅ **OTP (One-Time Password) System**: 6-digit OTPs with 5-minute expiration for enhanced security
-- ✅ **Automatic Caching**: All responses include cache tokens for improved performance
-- ✅ **Retained Result Sets**: Complete implementation of CICS CMCI retained result sets with NODISCARD
-- ✅ **Result Pagination**: Support for index/count parameters and ORDERBY sorting
-- ✅ **Cache Management**: 15-minute automatic expiry and session-based security
-- ✅ **Multiple Resource Types**: Supports all major CICS resource types (Programs, Transactions, Regions, etc.)
-- ✅ **Error Simulation**: Can simulate various CMCI response codes (OK, NODATA, INVALIDPARM, etc.)
-- ✅ **RESTful Operations**: GET, POST, PUT, DELETE operations on CICS resources
-- ✅ **LtpaToken2 Support**: Cookie-based authentication with 8-hour token expiration
-- ✅ **Admin Interface**: Built-in endpoints for managing sessions, tokens, and cache
+Requires Node.js 22 or later and an npm registry configured in your environment.
 
-## Quick Start
-
-### Installation
-
-```bash
-cd cics-cmci-mock-server
-npm install
+```sh
+npm ci
+npm start                    # http://127.0.0.1:9080
+npm run dev                  # Node's built-in file watcher
+npm test                     # automated unit and real HTTP tests
+npm run test:coverage        # enforces coverage thresholds
+npm run validate             # syntax, license headers, tests, coverage
 ```
 
-### Running the Server
+The lockfile keeps exact versions and integrity hashes without registry URLs. Installs use your npm configuration. When updating dependencies, use `npm install --omit-lockfile-registry-resolved` to preserve this format.
 
-```bash
-# Start the server
-npm start
+CI runs validation on Node.js 22 and 24. Tests create isolated servers on ephemeral ports, require no running server or mainframe, and advance an injected clock to check expiry without waiting.
 
-# Or for development with auto-reload
-npm run dev
+## Quick examples
+
+### Admin login and cookie reuse
+
+```sh
+curl -u adminusr:adminpas -c /tmp/cmci-cookies \
+  'http://127.0.0.1:9080/CICSSystemManagement/CICSProgram?count=20'
+
+curl -b /tmp/cmci-cookies \
+  'http://127.0.0.1:9080/CICSSystemManagement/CICSManagedRegion'
 ```
 
-The server will start on `http://localhost:9080` by default.
+`adminusr` / `adminpas` are static mock credentials. `testuser` uses an OTP instead of a static password:
 
-## Usage Examples
+```sh
+curl -X POST 'http://127.0.0.1:9080/auth/generate-otp' \
+  -H 'Content-Type: application/json' -d '{"username":"testuser"}'
 
-### Basic Resource Retrieval
-
-```bash
-# Get CICS managed regions (with basic auth) - automatically includes cache token
-curl -X GET "http://localhost:9080/CICSSystemManagement/CICSManagedRegion" \
-  -H "Authorization: Basic $(echo -n 'testuser:testpass' | base64)"
-# Response: <resultsummary ... cachetoken="ABC123DEF456" recordcount="10" />
-# Also sets LtpaToken2 cookie for subsequent requests
-
-# Get multiple records - all responses now include cache tokens
-curl -X GET "http://localhost:9080/CICSSystemManagement/CICSCICSPlex?count=2" \
-  -H "Authorization: Basic $(echo -n 'testuser:testpass' | base64)"
-
-# Use cache token for efficient pagination
-curl -X GET "http://localhost:9080/CICSSystemManagement/CICSManagedRegion?cachetoken=ABC123DEF456&index=2&count=1" \
-  -H "Authorization: Basic $(echo -n 'testuser:testpass' | base64)"
-
-# Simulate NODATA response
-curl -X GET "http://localhost:9080/CICSSystemManagement/CICSProgram?simulate=nodata" \
-  -H "Authorization: Basic $(echo -n 'testuser:testpass' | base64)"
-
-# Use LtpaToken2 for subsequent requests (no Basic Auth needed)
-curl -X GET "http://localhost:9080/CICSSystemManagement/CICSManagedRegion" \
-  -H "LtpaToken2: YOUR_TOKEN_HERE"
+# Replace 123456 with the returned OTP.
+curl -u testuser:123456 -c /tmp/cmci-testuser-cookies \
+  'http://127.0.0.1:9080/CICSSystemManagement/CICSProgram'
 ```
 
-### Retained Result Sets (NODISCARD) Examples
+OTPs expire after five minutes and are consumed after one successful login. Generating another OTP before using the current one returns the existing OTP and its remaining lifetime. Use the returned cookie, or an `LtpaToken2` header, for subsequent requests. Set `OTP_SINGLE_USE=false` only when a test needs reusable OTPs.
 
-The mock server implements comprehensive CICS CMCI retained result sets as documented in [IBM's CICS documentation](https://www.ibm.com/docs/en/cics-ts/6.x?topic=cgr-using-retained-result-sets-improve-performance-get-requests).
+Sessions expire eight hours after login. Repeated Basic authentication reuses the same live session for a user; header and cookie authentication enforce the same expiry. Session expiry also removes its tokens and retained results. These are mock tokens, not IBM-signed LTPA tokens.
 
-```bash
-# Step 1: Create retained result set with NODISCARD and SUMMONLY
-curl -X GET "http://localhost:9080/CICSSystemManagement/CICSProgram?NODISCARD&SUMMONLY&count=1000" \
-  -H "Authorization: Basic $(echo -n 'testuser:testpass' | base64)"
+### Retained results and pagination
 
-# Response includes cachetoken for subsequent requests:
-# <resultsummary api_response1="1024" cachetoken="A1B2C3D4E5F6G7H8" recordcount="1000"/>
+```sh
+# The resultsummary contains the cachetoken to use below.
+curl -u adminusr:adminpas \
+  'http://127.0.0.1:9080/CICSSystemManagement/CICSProgram?count=20&NODISCARD&SUMMONLY'
 
-# Step 2: Retrieve first 10 records using CICSResultCache (now using LtpaToken2)
-curl -X GET "http://localhost:9080/CICSSystemManagement/CICSResultCache/A1B2C3D4E5F6G7H8/1/10?NODISCARD" \
-  -H "LtpaToken2: YOUR_TOKEN_FROM_STEP1"
+# Replace TOKEN with that cachetoken; indices are 1-based.
+curl -u adminusr:adminpas \
+  'http://127.0.0.1:9080/CICSSystemManagement/CICSResultCache/TOKEN/6/5?NODISCARD'
 
-# Step 3: Retrieve next 10 records (11-20)
-curl -X GET "http://localhost:9080/CICSSystemManagement/CICSResultCache/A1B2C3D4E5F6G7H8/11/10?NODISCARD" \
-  -H "LtpaToken2: YOUR_TOKEN_FROM_STEP1"
-
-# Step 4: Final request without NODISCARD to discard the result set
-curl -X GET "http://localhost:9080/CICSSystemManagement/CICSResultCache/A1B2C3D4E5F6G7H8?SUMMONLY" \
-  -H "LtpaToken2: YOUR_TOKEN_FROM_STEP1"
+# Release the snapshot when finished.
+curl -u adminusr:adminpas \
+  'http://127.0.0.1:9080/CICSSystemManagement/CICSResultCache/TOKEN?SUMMONLY'
 ```
 
-### Pagination and Ordering Examples
+Retained results follow the [IBM cache lifecycle](https://www.ibm.com/docs/en/cics-ts/6.x?topic=cgr-using-retained-result-sets-improve-performance-get-requests): reads with `NODISCARD` keep the snapshot; reads without it discard the snapshot. `SUMMONLY` omits records and reports zero displayed records while preserving the total count. Successful retained reads renew the fifteen-minute idle deadline. Concurrent readers should all specify `NODISCARD`.
 
-```bash
-# Create large result set for pagination
-curl -X GET "http://localhost:9080/CICSSystemManagement/CICSManagedRegion?NODISCARD&SUMMONLY&count=500" \
-  -H "Authorization: Basic $(echo -n 'testuser:testpass' | base64)"
+The mock additionally retains initial GET results automatically by default. Set `AUTO_CACHE=false` to require `NODISCARD` or `cache=true` for initial retention.
 
-# Get records 21-40 (page 2 with 20 records per page) - using LtpaToken2
-curl -X GET "http://localhost:9080/CICSSystemManagement/CICSResultCache/{TOKEN}/21/20?NODISCARD" \
-  -H "LtpaToken2: YOUR_TOKEN_HERE"
+Unknown or expired `/CICSResultCache/TOKEN` requests return HTTP 404. The legacy query form, `CICSProgram?cachetoken=TOKEN&index=6&count=5`, shares pagination, sorting, ownership, and discard behavior. For compatibility, an unknown query token generates fresh data with a new token. Set `CACHE_MISS_FALLBACK=false` to make query misses return 404 too. A query token cannot be used for a different resource or context.
 
-# Get first 10 records ordered by program name
-curl -X GET "http://localhost:9080/CICSSystemManagement/CICSResultCache/{TOKEN}/1/10?NODISCARD&orderby=program" \
-  -H "LtpaToken2: YOUR_TOKEN_HERE"
+Results belong to the creating user's session; another authenticated user gets HTTP 403. Repeated equivalent GETs return the same token and records. Requests in different CICS contexts or scopes have separate cache identities. Storage evicts the least recently used snapshots when configured limits are reached.
 
-# Get records with multiple sort fields
-curl -X GET "http://localhost:9080/CICSSystemManagement/CICSResultCache/{TOKEN}/1/10?NODISCARD&orderby=status,program" \
-  -H "LtpaToken2: YOUR_TOKEN_HERE"
+### Sorting and errors
+
+```sh
+curl -u adminusr:adminpas \
+  'http://127.0.0.1:9080/CICSSystemManagement/CICSProgram?count=10&ORDERBY=status,program/D'
+
+curl -u adminusr:adminpas \
+  'http://127.0.0.1:9080/CICSSystemManagement/CICSProgram?simulate=nodata'
 ```
 
-### Legacy Caching (for backward compatibility)
+`ORDERBY` accepts up to 32 comma-separated attribute names, case-insensitively, with optional `/A` or `/D` directions. Sorting compares XML attribute values lexicographically, occurs before pagination, and preserves the stored snapshot's order.
 
-```bash
-# Request with legacy caching enabled
-curl -X GET "http://localhost:9080/CICSSystemManagement/CICSManagedRegion?cache=true" \
-  -H "Authorization: Basic $(echo -n 'testuser:testpass' | base64)"
+| Parameter | Behavior |
+| --- | --- |
+| `count=N` | Generate N records on an initial GET (default 3, maximum 10,000); page size on a cache read |
+| `index=N` | First displayed record, starting at 1 |
+| `NODISCARD` | Create or keep a retained result set; presence enables it |
+| `SUMMONLY` | Return only the summary; presence enables it |
+| `ORDERBY=field1,field2/D` | Sort before pagination |
+| `cachetoken=TOKEN` | Read a retained result via the resource query |
+| `cache=true` | Mark a retained snapshot for legacy cache monitoring/cleanup |
+| `simulate=NAME` | Return a selected CMCI response code |
 
-# Use legacy cache token to retrieve cached results
-curl -X GET "http://localhost:9080/CICSSystemManagement/CICSManagedRegion?cachetoken=ABC123DEF456" \
-  -H "LtpaToken2: YOUR_TOKEN_HERE"
+Parameter names are case-insensitive. Duplicate parameters, invalid integers, negative counts, zero cache page sizes, and invalid sort expressions return HTTP 400 with a CMCI `INVALIDPARM` response. An initial `count=0` returns `NODATA` without allocating a cache entry.
+
+| Simulation | CMCI code |
+| --- | --- |
+| `ok` | 1024 |
+| `nodata` | 1027 |
+| `invalidparm` | 1028 |
+| `notavailable` | 1034 |
+| `invaliddata` | 1041 |
+
+Simulations intentionally return HTTP 200 with the selected CMCI code, allowing tests of client-side CMCI error handling separately from HTTP failures. Actual invalid input, missing resources, authentication failures, and cache access violations use appropriate HTTP error statuses.
+
+### Write operations
+
+```sh
+curl -u adminusr:adminpas -X POST \
+  'http://127.0.0.1:9080/CICSSystemManagement/CICSDefinitionProgram' \
+  -H 'Content-Type: application/xml' \
+  -d '<request><create><parameter name="CSD"><cicsdefinitionprogram program="MYPROG"/></parameter></create></request>'
 ```
 
-### Resource Operations
+Resource POST, PUT, and DELETE return operation acknowledgements. **They do not persist resource changes.** POST requires a well-formed XML document with one `request` root. PUT validates XML when a body is provided and permits an empty operation request. `application/xml`, `text/xml`, and `application/*+xml` are accepted. Invalid documents, trailing garbage, extra roots, and DTD/entity declarations are rejected. Unsupported content types return 415; oversized bodies return 413. `DELETE /CICSSystemManagement/CICSResultCache/TOKEN` actually deletes the retained set.
 
-```bash
-# Create a new program definition
-curl -X POST "http://localhost:9080/CICSSystemManagement/CICSDefinitionProgram" \
-  -H "Authorization: Basic $(echo -n 'testuser:testpass' | base64)" \
-  -H "Content-Type: application/xml" \
-  -d '<request><create><parameter name="CSD"><cicsdefinitionprogram program="MYPROG" /></parameter></create></request>'
+## Custom fixtures and embedded use
 
-# Update a resource (using LtpaToken2 from previous request)
-curl -X PUT "http://localhost:9080/CICSSystemManagement/CICSDefinitionProgram" \
-  -H "LtpaToken2: YOUR_TOKEN_HERE" \
-  -H "Content-Type: application/xml"
+```js
+const { createApp } = require('./server');
 
-# Delete a resource
-curl -X DELETE "http://localhost:9080/CICSSystemManagement/CICSDefinitionProgram/MYPROG" \
-  -H "LtpaToken2: YOUR_TOKEN_HERE"
+const app = createApp({
+  config: { autoCache: false, cacheMissFallback: false },
+  fixtures: {
+    CICSProgram: [
+      { program: 'PAYROLL', status: 'ENABLED', language: 'COBOL' },
+      { program: 'REPORT', status: 'DISABLED', language: 'COBOL' }
+    ]
+  }
+});
+
+const server = app.listen(0, '127.0.0.1');
+// Close server when your client tests finish.
 ```
 
-## Supported Resource Types
+Each `createApp()` has independent sessions, OTPs, and cached results. Importing `server.js` starts no listener or cleanup interval. The existing default Express app export is preserved. Embedded apps use stable defaults; pass `env: process.env` explicitly to read environment settings. `now: () => milliseconds` supports deterministic expiry tests, and `logger` can receive unexpected server errors.
 
-The mock server supports all major CICS resource types:
+Fixtures are cloned on creation and use plain attribute objects with scalar values. An initial GET returns all supplied fixture records unless `count` caps them. Empty fixtures return `NODATA`. Generated records and default fixture keys have deterministic hexadecimal `_keydata` values.
 
-- **CICSManagedRegion** - CICS managed regions
-- **CICSCICSPlex** - CICS plexes
-- **CICSRegion** - CICS regions
-- **CICSDefinitionProgram** - Program definitions
-- **CICSDefinitionTransaction** - Transaction definitions
-- **CICSDefinitionURIMap** - URI map definitions
-- **CICSDefinitionWebService** - Web service definitions
-- **CICSDefinitionBundle** - Bundle definitions
-- **CICSProgram** - Program resources
-- **CICSLibrary** - Library resources
-- **CICSTCPIPService** - TCP/IP service resources
-- **CICSPipeline** - Pipeline resources
-- **CICSWebService** - Web service resources
-- **CICSJVMServer** - JVM server resources
-- **CICSURIMap** - URI map resources
-- **CICSRegionGroup** - Region group resources
-- **CICSCSDGroup** - CSD group definitions
-- **CICSResultCache** - Result cache
-- **CICSTask** - Task resources
-- **CICSBundle** - Bundle resources
-- **CICSLocalFile** - Local file resources
-- **CICSLocalTransaction** - Local transaction resources
-- **CICSRemoteTransaction** - Remote transaction resources
+## Supported resources and current limits
 
-## Query Parameters
+See `RESOURCE_TYPES` in [src/resources.js](src/resources.js) for the complete list, including programs, definitions, transactions, regions, plexes, bundles, files, URI maps, libraries, pipelines, JVM servers and endpoints, temporary storage queues, CSD groups, tasks, and retained results. All 17 names in the [Zowe client resource enum](https://github.com/zowe/cics-for-zowe-client/blob/main/packages/vsce-api/src/resources/ResourceTypes.ts) have endpoints. Unknown resource names return 404.
 
-### Standard CICS CMCI Parameters
+Programs, managed regions, plexes, remote files, JVM endpoints, and both temporary storage queue types have dedicated templates. Other types have generic `name`/`status` records unless you supply fixtures. The following templates provide the fields required by the corresponding Zowe resource interfaces:
 
-- `NODISCARD` - Create/maintain retained result set (no value required)
-- `SUMMONLY` - Return summary only without records (no value required)
-- `ORDERBY=field1,field2` - Sort results by specified fields (max 32 fields)
+| Resource | Representative attributes |
+| --- | --- |
+| [CICSRemoteFile](https://www.ibm.com/docs/en/cics-ts/6.x?topic=tables-remfile-resource-table) | `file`, `remotename`, `remotesystem`, `enablestatus` |
+| [CICSJVMEndpoint](https://www.ibm.com/docs/en/cics-ts/6.x?topic=tables-endpoint-resource-table) | `jvmendpoint`, `jvmserver`, `host`, `port`, `secport`, `enablestatus`, `type` |
+| [CICSTSQueue](https://www.ibm.com/docs/en/cics-ts/6.x?topic=tables-tsqname-resource-table) | `name`, `hexname`, `location`, `numitems`, `quelength`, `expiryint`, `transid`, `tsmodel` |
+| [CICSSharedTSQueue](https://www.ibm.com/docs/en/cics-ts/5.5.0?topic=tables-tsqshr-resource-table) | `name`, `poolname`, `hexname`, `location`, `numitems`, `quelength` |
 
-### Mock Server Specific Parameters
+These four templates include `eyu_cicsname="REGION1"` and deterministic identities. JVM endpoints include both identity fields, `jvmendpoint` and `jvmserver`; shared queues include `name` and `poolname`. Queue `hexname` values encode the 16-byte, space-padded EBCDIC name. They support the same authentication, fixtures, sorting, retained-result pagination, and stateless write acknowledgements as the other resource endpoints.
 
-- `count=N` - Return N mock records (default: 10)
-- `simulate=nodata` - Simulate NODATA response (1027)
+Context/scope path segments are accepted and separate cache identity. They do not filter generated records. `CRITERIA` filtering, resource persistence, resource-specific actions, full IBM schema validation, and the CMCI schema endpoint are not implemented. SDK/extension integration should verify the fields it consumes with custom fixtures.
 
-- `index=N` - Start pagination from record N (1-based, used with cachetoken)
-- `cache=true` - Enable legacy result caching (for backward compatibility)
+## Administrative endpoints
 
-### URL Path Parameters (for CICSResultCache)
+All `/admin/*` endpoints require `adminusr` credentials or its current LtpaToken2. Health and OTP generation/status endpoints are public mock controls.
 
-- `/CICSResultCache/{token}` - Access retained result set
-- `/CICSResultCache/{token}/{index}` - Start from specific record (1-based)
-- `/CICSResultCache/{token}/{index}/{count}` - Get specific range of records
-
-## Administrative Endpoints
-
-### 📊 Monitoring
-- `GET /health` - Server health check (includes LtpaToken2 count)
-- `GET /admin/sessions` - List active sessions with LtpaToken2 info
-- `GET /admin/ltpa-tokens` - List all active LtpaToken2 mappings
-- `GET /admin/cache` - List legacy cache tokens  
-- `GET /admin/retained-results` - List all retained result sets with details
-
-### 🗑️ Cleanup
-- `DELETE /admin/sessions` - Clear all sessions, LtpaToken2 mappings, and retained result sets
-- `DELETE /admin/ltpa-tokens` - Clear all LtpaToken2 mappings only
-- `DELETE /admin/cache` - Clear all legacy cache entries
-- `DELETE /admin/retained-results` - Clear all retained result sets
-- `DELETE /admin/retained-results/{token}` - Delete specific retained result set
-
-## Response Format
-
-All responses follow the standard CICS CMCI XML format:
-
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<response xmlns="http://www.ibm.com/xmlns/prod/CICS/smw2int"
-  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-  xsi:schemaLocation="http://www.ibm.com/xmlns/prod/CICS/smw2int http://localhost:9080/CICSSystemManagement/schema/CICSSystemManagement.xsd"
-  version="3.0" connect_version="0620">
-  <resultsummary api_response1="1024" api_response2="0"
-    api_response1_alt="OK" api_response2_alt=""
-    recordcount="1" displayed_recordcount="1" />
-  <records>
-    <cicsmanagedregion _keydata="..." applid="REGION1" ... />
-  </records>
-</response>
+```sh
+curl -u adminusr:adminpas 'http://127.0.0.1:9080/admin/retained-results'
+curl -u adminusr:adminpas -X DELETE 'http://127.0.0.1:9080/admin/retained-results'
 ```
 
-## Response Codes
+| Path | GET | DELETE |
+| --- | --- | --- |
+| `/health` | Health, live session/token/cache counts, retained record count | — |
+| `/admin/sessions` | Sessions and token metadata | Sessions, their tokens, and results |
+| `/admin/ltpa-tokens` | Current tokens | Revoke tokens; subsequent Basic login issues a new token |
+| `/admin/cache` | Tokens marked `cache=true` | Those snapshots only |
+| `/admin/retained-results` | All snapshots and metadata | All snapshots |
+| `/admin/retained-results/:token` | — | One snapshot, or 404 |
+| `/admin/otps` | OTP expiry metadata, without OTP values | Active OTPs |
+| `/auth/generate-otp` | — | —; POST JSON `{ "username": "testuser" }` |
+| `/auth/otp-status/testuser` | OTP presence and remaining lifetime | — |
 
-- `1024` (OK) - Successful operation
-- `1027` (NODATA) - No data found
-- `1028` (INVALIDPARM) - Invalid parameter
-- `1034` (NOTAVAILABLE) - Resource not available
-- `1041` (INVALIDDATA) - Invalid data
-
-## Authentication
-
-The mock server supports both Basic Authentication and LtpaToken2 cookie-based authentication, simulating real CICS authentication flows.
-
-### 🔐 Supported Credentials
-
-The mock server supports two authentication methods:
-
-#### Static Credentials (Admin Only)
-- **adminusr** / **adminpas** - Admin user with permanent static password
-
-#### OTP-Based Authentication (testuser)
-- **testuser** - Must use one-time passwords (OTP) generated via API
-- No static password; requires OTP generation before each authentication
-
-### 🍪 LtpaToken2 Flow
-
-1. **Initial Authentication**: Use Basic Auth with valid credentials
-2. **Cookie Generation**: Server automatically sets `LtpaToken2` cookie (8-hour expiration)
-3. **Subsequent Requests**: Use `LtpaToken2` header or cookie instead of Basic Auth
-
-### Examples
-
-#### Admin Authentication (Static Password)
-```bash
-# Admin user with permanent credentials
-curl -u "adminusr:adminpas" "http://localhost:9080/CICSSystemManagement/CICSManagedRegion"
-# Server sets LtpaToken2 cookie in response
-```
-
-#### testuser Authentication (OTP Flow)
-```bash
-# Step 1: Generate OTP for testuser
-curl -X POST "http://localhost:9080/auth/generate-otp" \
-  -H "Content-Type: application/json" \
-  -d '{"username": "testuser"}'
-# Response: {"otp": "123456", "expiresIn": "5 minutes", ...}
-
-# Step 2: Use OTP as password for authentication
-curl -u "testuser:123456" "http://localhost:9080/CICSSystemManagement/CICSManagedRegion"
-# Server sets LtpaToken2 cookie in response
-
-# Step 3: Check OTP status (optional)
-curl "http://localhost:9080/auth/otp-status/testuser"
-# Response: {"hasOTP": true, "timeRemainingSeconds": 240, ...}
-```
-
-#### Subsequent Requests (Both Users)
-```bash
-# Extract token from Set-Cookie header (or use browser cookies)
-# Set-Cookie: LtpaToken2=ABC123...; Max-Age=28800; HttpOnly; SameSite=Lax
-
-# Use LtpaToken2 for subsequent requests
-curl -H "LtpaToken2: ABC123..." "http://localhost:9080/CICSSystemManagement/CICSManagedRegion"
-
-# Invalid credentials are rejected
-curl -u "wronguser:wrongpass" "http://localhost:9080/CICSSystemManagement/CICSManagedRegion"
-# Response: HTTP 401 {"error":"Invalid username or password"}
-```
-
-### 🔍 Admin Endpoints
-
-Monitor authentication state:
-
-- `GET /admin/sessions` - View active user sessions with LtpaToken2 info
-- `GET /admin/ltpa-tokens` - View all active LtpaToken2 mappings
-- `DELETE /admin/ltpa-tokens` - Clear all token mappings
-- `DELETE /admin/sessions` - Clear all sessions and tokens
-
-### 🔢 OTP Management Endpoints
-
-- `POST /auth/generate-otp` - Generate OTP for testuser (Body: `{"username": "testuser"}`)
-- `GET /auth/otp-status/:username` - Check OTP status for a user
-- `GET /admin/otps` - View all active OTPs (admin endpoint)
-- `DELETE /admin/otps` - Clear all OTPs (admin endpoint)
+Reading an admin endpoint with Basic credentials creates or renews the admin's authentication mapping. Use `/health` to check that session/token cleanup left zero entries without creating another session. Expired state is removed on requests, without background timers. No credentials or request headers are written to server logs.
 
 ## Configuration
 
-Environment variables:
+`npm start` and `npm run dev` read these environment variables. Programmatic `config` keys use camelCase, as shown below.
 
-- `PORT` - Server port (default: 9080)
+| Environment | Config key | Default |
+| --- | --- | --- |
+| `HOST` | `host` | `127.0.0.1` |
+| `PORT` | `port` | `9080` (`0` selects an ephemeral port) |
+| `DEFAULT_COUNT` | `defaultCount` | `3` |
+| `MAX_RECORDS` | `maxRecords` | `10000` |
+| `MAX_RESULT_SETS` | `maxResultSets` | `100` |
+| `MAX_CACHED_RECORDS` | `maxCachedRecords` | `100000` |
+| `CACHE_TTL_MS` | `cacheTtlMs` | `900000` |
+| `SESSION_TTL_MS` | `sessionTtlMs` | `28800000` |
+| `OTP_TTL_MS` | `otpTtlMs` | `300000` |
+| `OTP_SINGLE_USE` | `otpSingleUse` | `true` |
+| `AUTO_CACHE` | `autoCache` | `true` |
+| `CACHE_MISS_FALLBACK` | `cacheMissFallback` | `true` |
+| `BODY_LIMIT` | `bodyLimit` | `100kb` |
 
-## Integration with CICS SDK
+Boolean environment values must be `true` or `false`. Numeric configuration is validated before startup; `DEFAULT_COUNT <= MAX_RECORDS <= MAX_CACHED_RECORDS`. Limits cap retained record counts, not exact bytes. Increase them deliberately for larger client datasets. Use `HOST=0.0.0.0` when a container or another machine needs access.
 
-This mock server is designed to work seamlessly with the `CicsCmciRestClient` from the CICS SDK. Simply configure your client to point to `http://localhost:9080` instead of your actual CICS system.
+## Examples and development
 
-Example TypeScript usage:
+With the server running:
 
-```typescript
-import { CicsCmciRestClient } from "@zowe/cics-for-zowe-sdk";
-import { AbstractSession } from "@zowe/imperative";
-
-const session = new AbstractSession({
-  hostname: "localhost",
-  port: 9080,
-  protocol: "http",
-  type: "basic",
-  user: "testuser",        // Valid credentials: testuser:testpass or adminusr:adminpas
-  password: "testpass",
-});
-
-// Use the mock server - automatically handles LtpaToken2 cookies
-const response = await CicsCmciRestClient.getExpectParsedXml(session, "/CICSSystemManagement/CICSManagedRegion");
-
-// Subsequent requests will automatically use LtpaToken2 cookie
-const nextResponse = await CicsCmciRestClient.getExpectParsedXml(session, "/CICSSystemManagement/CICSProgram");
-```
-
-## 🚀 New: Automatic Caching
-
-**All responses now include cache tokens automatically!** This improves performance by enabling efficient pagination and data reuse without requiring the `NODISCARD` parameter.
-
-### How It Works
-
-1. **Every GET request** automatically generates a cache token and stores the result set
-2. **Use the cache token** via the CICSResultCache path: `/CICSResultCache/{cachetoken}/{index}/{count}`
-3. **Cache expires** after 15 minutes of inactivity (follows IBM CICS specification)
-4. **Invalid/expired tokens** automatically generate fresh data (graceful fallback)
-
-### Benefits
-
-- 🎯 **Zero configuration** - automatic caching for all responses
-- 🚀 **Better performance** - cached pagination instead of regenerating data
-- 📱 **Improved UX** - efficient paging for large datasets
-- 🔐 **Secure** - session-isolated cache access
-- ⚡ **Backwards compatible** - existing clients continue to work
-
-### Example Usage
-
-```bash
-# Step 1: Make any request - cache token included automatically
-curl -u "testuser:testpass" "http://localhost:9080/CICSSystemManagement/CICSProgram?count=20"
-# Response: <resultsummary ... cachetoken="ABC123" recordcount="20" />
-# Also sets LtpaToken2 cookie
-
-# Step 2: Use cache token for efficient pagination (using LtpaToken2)
-curl -H "LtpaToken2: YOUR_TOKEN" "http://localhost:9080/CICSSystemManagement/CICSProgram?cachetoken=ABC123&index=5&count=3"
-# Returns records 5-7 from cached result set
-
-# Step 3: Invalid token automatically generates new data
-curl -H "LtpaToken2: YOUR_TOKEN" "http://localhost:9080/CICSSystemManagement/CICSProgram?cachetoken=INVALID&count=5"
-# Gracefully falls back to generating fresh response
-```
-
-## Retained Result Sets Features
-
-The mock server implements the complete CICS CMCI retained result sets functionality:
-
-### ✅ Implemented Features
-
-- **NODISCARD Parameter**: Creates retained result sets stored on server
-- **SUMMONLY Parameter**: Returns summary without records for initial queries
-- **CICSResultCache Endpoint**: Access retained results with `/CICSResultCache/{token}`
-- **Pagination Support**: Use `/{index}/{count}` for record ranges (1-based indexing)
-- **ORDERBY Support**: Sort by multiple fields with `?orderby=field1,field2`
-- **15-Minute Expiry**: Automatic cleanup of unused result sets
-- **Session Security**: Only the creating session can access its result sets
-- **Concurrent Access**: Multiple requests can use the same cache token simultaneously
-- **Proper Cleanup**: Result sets are discarded when NODISCARD is not specified
-
-### 🔄 Cache Lifecycle
-
-1. **Create**: `GET /CICSSystemManagement/{resource}?NODISCARD&SUMMONLY`
-2. **Access**: `GET /CICSSystemManagement/CICSResultCache/{token}/{index}/{count}?NODISCARD`
-3. **Cleanup**: `GET /CICSSystemManagement/CICSResultCache/{token}` (without NODISCARD)
-
-### 🛡️ Security Model
-
-- Each retained result set is tied to the creating session
-- HTTP 403 returned for cross-session access attempts
-- HTTP 404 returned for non-existent or expired tokens
-- Automatic cleanup prevents memory leaks
-
-### 📊 Monitoring
-
-- Admin endpoints provide visibility into active result sets
-- Detailed information includes creation time, last access, expiry status
-- Individual result sets can be manually deleted via admin interface
-
-## Testing
-
-### Run Comprehensive Demo
-
-```bash
-# Demonstrates all retained result sets features
-node examples/retained-result-sets-demo.js
-```
-
-### Run Basic Tests
-
-```bash
-# Basic functionality tests
+```sh
 node examples/test-client.js
+node examples/retained-result-sets-demo.js
+bash examples/otp-workflow-demo.sh        # requires curl and jq
+bash examples/token-management-demo.sh   # requires curl and jq
 ```
 
-## Contributing
+Examples accept `MOCK_SERVER_URL` (default `http://127.0.0.1:9080`). They exercise and sometimes clear mock state; automated tests use their own isolated instances.
 
-This mock server can be extended to support additional CICS features:
+Code is split into configuration (`src/config.js`), CMCI XML/query utilities (`src/cmci.js`), resource templates (`src/resources.js`), authentication (`src/auth.js`), session/cache storage (`src/state.js`), routes (`src/cmci-routes.js`, `src/admin-routes.js`), and app assembly (`src/app.js`). `server.js` owns startup and shutdown.
 
-- Complex filtering and search criteria with CRITERIA parameter
-- Transaction support with PUT operations
-- Bundle operations with bundle-specific resources
-- Custom response templates for different scenarios
-- WebSocket support for real-time updates
-- Advanced security models and authentication
+The test suite covers every listed resource, malformed requests, authentication and OTP races, session/token expiry and revocation, cache ownership/expiry/discard, concurrent pagination, stable snapshots, sorting, fixtures, memory limits, administrative cleanup, module imports, and CLI lifecycle. Coverage checks require 95% lines, 85% branches, and 95% functions across server code.
 
-## Development Scripts
+`npm run license:check` now fails if source headers are missing; `npm run license:add` adds them. `npm audit` uses the configured registry.
 
-### License Header Management
+## Next improvements, in priority order
 
-This project includes a script to add SPDX license headers to all source files:
+1. **Real SDK contract tests.** Run representative retrieval, retained pagination, and authentication flows through `CicsCmciRestClient`. This is the strongest next check that the mock catches actual extension regressions.
+2. **Representative resource fixtures.** Add sanitized, versioned IBM response fixtures for the attributes the extension uses. Verify required fields for each resource instead of relying on generic records.
+3. **Stateful resource operations and filtering.** Implement create/update/delete and a documented subset of `CRITERIA`, scoped by plex/region. Test read-after-write behavior and retained snapshot semantics.
+4. **Scripted failure scenarios.** Add per-instance sequences for latency, transport failures, and HTTP errors so clients can test retries, cancellation, and recovery reproducibly.
 
-```bash
-# Check which files would get license headers (dry run)
-npm run license:check
+## Compatibility changes
 
-# Add license headers to all applicable files
-npm run license:add
-```
-
-The script automatically adds appropriate headers for different file types:
-- **JavaScript files**: `/** SPDX-License-Identifier: Apache-2.0 ... */`
-- **Shell scripts**: `# SPDX-License-Identifier: Apache-2.0 ...` (preserves shebang)
-- **Markdown files**: `<!-- SPDX-License-Identifier: Apache-2.0 ... -->`
-
-Files that already have license headers are automatically skipped.
+Node.js 22+ is required; Express 5 replaces Express 4. The CLI binds to loopback by default. Admin endpoints require admin authentication. OTPs are now single-use with the documented five-minute lifetime. Invalid inputs and unknown resources fail explicitly. Cache path misses no longer fabricate data, and displayed counts match the records actually sent. Existing initial automatic caching and legacy query miss fallback remain enabled by default.
 
 ## License
 
-Apache License 2.0 - see [LICENSE](LICENSE) file for details.
+Apache-2.0; see [LICENSE](LICENSE).

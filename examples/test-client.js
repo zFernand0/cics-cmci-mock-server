@@ -13,7 +13,7 @@
 const http = require('http');
 const xml2js = require('xml2js');
 
-const MOCK_SERVER_URL = 'localhost:9080';
+const MOCK_SERVER_URL = new URL(process.env.MOCK_SERVER_URL || 'http://127.0.0.1:9080');
 const ADMIN_CREDENTIALS = Buffer.from('adminusr:adminpas').toString('base64');
 
 /**
@@ -22,13 +22,13 @@ const ADMIN_CREDENTIALS = Buffer.from('adminusr:adminpas').toString('base64');
 function makeRequest(method, path, body = null) {
   return new Promise((resolve, reject) => {
     const options = {
-      hostname: 'localhost',
-      port: 9080,
+      hostname: MOCK_SERVER_URL.hostname,
+      port: Number(MOCK_SERVER_URL.port || 80),
       path: path,
       method: method,
       headers: {
         'Authorization': `Basic ${ADMIN_CREDENTIALS}`,
-        'Content-Type': 'application/xml'
+        'Content-Type': path.startsWith('/auth/') ? 'application/json' : 'application/xml'
       }
     };
 
@@ -182,11 +182,10 @@ async function testCaching() {
   const parsed2 = await parseAndValidateXML(response2.body);
 
   // Should get the same data back
-  if (response1.body !== response2.body) {
-    console.log('⚠️  Cache responses differ (this might be OK if records have timestamps)');
-  } else {
-    console.log('✅ Cache returned identical response');
+  if (JSON.stringify(parsed1.response.records) !== JSON.stringify(parsed2.response.records)) {
+    throw new Error('Cached records differ from the original snapshot');
   }
+  console.log('✅ Cache returned identical records');
 
   console.log('✅ Caching test passed');
   return { parsed1, parsed2 };
@@ -275,8 +274,8 @@ async function testOTPAuthentication() {
   const testUserCredentials = Buffer.from(`testuser:${otpData.otp}`).toString('base64');
   
   const authOptions = {
-    hostname: 'localhost',
-    port: 9080,
+    hostname: MOCK_SERVER_URL.hostname,
+    port: Number(MOCK_SERVER_URL.port || 80),
     path: '/CICSSystemManagement/CICSManagedRegion?count=1',
     method: 'GET',
     headers: {
@@ -309,8 +308,8 @@ async function testOTPAuthentication() {
     // Test subsequent request with LTPA token
     console.log('   Testing LTPA token authentication...');
     const tokenOptions = {
-      hostname: 'localhost',
-      port: 9080,
+      hostname: MOCK_SERVER_URL.hostname,
+      port: Number(MOCK_SERVER_URL.port || 80),
       path: '/CICSSystemManagement/CICSCICSPlex?count=1',
       method: 'GET',
       headers: {
@@ -363,7 +362,7 @@ async function testAdminEndpoints() {
   // Test cache endpoint
   const cacheResponse = await makeRequest('GET', '/admin/cache');
   const cache = JSON.parse(cacheResponse.body);
-  console.log(`   Cache entries: ${cache.count || 0}`);
+  console.log(`   Cache entries: ${cache.legacyCacheCount}`);
 
   console.log('✅ Admin endpoints test passed');
   return { sessions, tokens, otps, cache };
@@ -374,7 +373,7 @@ async function testAdminEndpoints() {
  */
 async function runAllTests() {
   console.log('🚀 Starting CICS CMCI Mock Server tests...');
-  console.log(`Target: http://${MOCK_SERVER_URL}`);
+  console.log(`Target: ${MOCK_SERVER_URL}`);
 
   try {
     await testHealthCheck();

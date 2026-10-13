@@ -5,7 +5,12 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "nodemon server.js",
+    "dev": "node --watch server.js",
+    "test": "node --test test/*.test.js",
+    "test:watch": "node --test --watch test/*.test.js",
+    "test:coverage": "node --test --experimental-test-coverage --test-coverage-include=src/*.js --test-coverage-include=server.js --test-coverage-lines=95 --test-coverage-branches=85 --test-coverage-functions=95 test/*.test.js",
+    "check": "node scripts/check.js",
+    "validate": "npm run check && npm run license:check && npm run test:coverage",
     "license:add": "node scripts/add-license-headers.js",
     "license:check": "node scripts/add-license-headers.js --dry-run"
   },
@@ -20,15 +25,14 @@
   ],
   "author": "Fernando Rijo Cedeno",
   "license": "Apache-2.0",
+  "engines": {
+    "node": ">=22"
+  },
   "dependencies": {
     "cookie-parser": "^1.4.7",
-    "cors": "^2.8.5",
-    "crypto": "^1.0.1",
-    "express": "^4.22.1",
+    "cors": "^2.8.6",
+    "express": "^5.2.1",
+    "sax": "^1.4.1",
     "xml2js": "^0.6.2"
-  },
-  "devDependencies": {
-    "node-fetch": "^2.7.0",
-    "nodemon": "^3.1.14"
   }
 }

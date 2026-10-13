@@ -15,22 +15,22 @@
 const http = require('http');
 const xml2js = require('xml2js');
 
-const MOCK_SERVER_URL = 'localhost:9080';
-const TEST_CREDENTIALS = Buffer.from('testuser:testpass').toString('base64');
+const MOCK_SERVER_URL = new URL(process.env.MOCK_SERVER_URL || 'http://127.0.0.1:9080');
+const TEST_CREDENTIALS = Buffer.from('adminusr:adminpas').toString('base64');
 
 /**
  * Make an HTTP request to the mock server
  */
-function makeRequest(method, path, body = null) {
+function makeRequest(method, path, body = null, authorization = `Basic ${TEST_CREDENTIALS}`) {
   return new Promise((resolve, reject) => {
     const options = {
-      hostname: 'localhost',
-      port: 9080,
+      hostname: MOCK_SERVER_URL.hostname,
+      port: Number(MOCK_SERVER_URL.port || 80),
       path: path,
       method: method,
       headers: {
-        'Authorization': `Basic ${TEST_CREDENTIALS}`,
-        'Content-Type': 'application/xml'
+        'Authorization': authorization,
+        'Content-Type': path.startsWith('/auth/') ? 'application/json' : 'application/xml'
       }
     };
 
@@ -250,40 +250,15 @@ async function demo4_SecurityDemo() {
 
   console.log(`   ✅ Created result set: ${cacheToken}`);
 
-  // Try to access with different credentials (simulating different session)
-  console.log('\n2️⃣  Attempting access with different session...');
-  const otherCredentials = Buffer.from('otheruser:otherpass').toString('base64');
-
-  try {
-    const unauthorizedReq = http.request({
-      hostname: 'localhost',
-      port: 9080,
-      path: `/CICSSystemManagement/CICSResultCache/${cacheToken}/1/5`,
-      method: 'GET',
-      headers: {
-        'Authorization': `Basic ${otherCredentials}`,
-        'Content-Type': 'application/xml'
-      }
-    }, (res) => {
-      let data = '';
-      res.on('data', (chunk) => { data += chunk; });
-      res.on('end', async () => {
-        console.log(`   🚫 Expected HTTP ${res.statusCode} (Access denied)`);
-        if (res.statusCode === 403) {
-          const errorParsed = await parseXML(data);
-          console.log(`   📝 Response: ${errorParsed.response.resultsummary.api_response1_alt}`);
-        }
-      });
-    });
-
-    unauthorizedReq.end();
-
-    // Wait a bit for the request to complete
-    await new Promise(resolve => setTimeout(resolve, 100));
-
-  } catch (error) {
-    console.log(`   ❌ Network error: ${error.message}`);
-  }
+  // Authenticate as another supported user to test cache ownership.
+  console.log('\n2️⃣  Attempting access with another authenticated user...');
+  const otpResponse = await makeRequest('POST', '/auth/generate-otp', JSON.stringify({ username: 'testuser' }));
+  const otp = JSON.parse(otpResponse.body).otp;
+  const otherCredentials = Buffer.from(`testuser:${otp}`).toString('base64');
+  const unauthorized = await makeRequest('GET',
+    `/CICSSystemManagement/CICSResultCache/${cacheToken}/1/5`, null, `Basic ${otherCredentials}`);
+  if (unauthorized.statusCode !== 403) throw new Error(`Expected HTTP 403, got ${unauthorized.statusCode}`);
+  console.log('   🚫 HTTP 403: Access denied');
 
   // Test invalid cache token
   console.log('\n3️⃣  Testing invalid cache token...');
@@ -293,6 +268,7 @@ async function demo4_SecurityDemo() {
 
   console.log(`   🚫 Expected HTTP ${invalidTokenResponse.statusCode} (Not Found)`);
 
+  if (invalidTokenResponse.statusCode !== 404) throw new Error(`Expected HTTP 404, got ${invalidTokenResponse.statusCode}`);
   if (invalidTokenResponse.statusCode === 404) {
     const errorParsed = await parseXML(invalidTokenResponse.body);
     console.log(`   📝 Response: ${errorParsed.response.resultsummary.api_response1_alt}`);
