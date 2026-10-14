@@ -8,7 +8,7 @@ const sax = require('sax');
 
 const RESPONSE_CODES = Object.freeze({
   OK: '1024', NODATA: '1027', INVALIDPARM: '1028',
-  NOTAVAILABLE: '1034', INVALIDDATA: '1041'
+  NOTAVAILABLE: '1034', TABLEERROR: '1038', INVALIDDATA: '1041'
 });
 const NAMESPACE = 'http://www.ibm.com/xmlns/prod/CICS/smw2int';
 const builder = new xml2js.Builder({ headless: true, rootName: 'response' });
@@ -21,7 +21,7 @@ class CmciError extends Error {
   }
 }
 
-function createXMLResponse(summary, records = null, schemaUrl = '/CICSSystemManagement/schema/CICSSystemManagement.xsd') {
+function createXMLResponse(summary, records = null, schemaUrl = '/CICSSystemManagement/schema/CICSSystemManagement.xsd', errors = null) {
   const response = {
     $: {
       xmlns: NAMESPACE,
@@ -32,20 +32,21 @@ function createXMLResponse(summary, records = null, schemaUrl = '/CICSSystemMana
     resultsummary: { $: summary }
   };
   if (records) response.records = records;
+  if (errors) response.errors = errors;
   return `<?xml version="1.0" encoding="UTF-8"?>\n${builder.buildObject(response)}`;
 }
 
-function sendResponse(req, res, { code = 'OK', status = 200, message = '', total = 0, records = [], resourceType, token } = {}) {
+function sendResponse(req, res, { code = 'OK', status = 200, message = '', response2 = '0', total = 0, records = [], resourceType, token, errors } = {}) {
   const summary = {
     api_source: 'CICSPlex SM', api_function: req.method,
-    api_response1: RESPONSE_CODES[code], api_response2: '0',
+    api_response1: RESPONSE_CODES[code], api_response2: String(response2),
     api_response1_alt: code, api_response2_alt: message,
     recordcount: String(total), displayed_recordcount: String(records.length)
   };
   if (token) summary.cachetoken = token;
   const data = records.length ? { [resourceType]: records } : null;
   const schemaUrl = `${req.protocol}://${req.get('host')}/CICSSystemManagement/schema/CICSSystemManagement.xsd`;
-  return res.status(status).type('application/xml').send(createXMLResponse(summary, data, schemaUrl));
+  return res.status(status).type('application/xml').send(createXMLResponse(summary, data, schemaUrl, errors));
 }
 
 function normalizeQuery(query) {

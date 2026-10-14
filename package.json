@@ -7,6 +7,7 @@
     "start": "node server.js",
     "dev": "node --watch server.js",
     "test": "node --test test/*.test.js",
+    "test:client": "node scripts/test-client-system.js",
     "test:watch": "node --test --watch test/*.test.js",
     "test:coverage": "node --test --experimental-test-coverage --test-coverage-include=src/*.js --test-coverage-include=server.js --test-coverage-lines=95 --test-coverage-branches=85 --test-coverage-functions=95 test/*.test.js",
     "check": "node scripts/check.js",

@@ -20,6 +20,9 @@ test('configuration is immutable, validated and independent of machine environme
   assert.equal(createConfig({ port: 1234, autoCache: false }, { PORT: '4321', AUTO_CACHE: 'true' }).port, 1234);
   assert.equal(createConfig({ autoCache: false }, { AUTO_CACHE: 'true' }).autoCache, false);
   assert.equal(typeof createApp({ env: { AUTO_CACHE: 'false' } }), 'function');
+  assert.equal(createConfig({}, { STATEFUL: 'true', REGIONS: 'REGION1,REGION2', CSD_GROUP: 'GROUP1' }).stateful, true);
+  assert.equal(createConfig({}, { LOG_REQUESTS: 'true' }).logRequests, true);
+  assert.equal(createConfig().logRequests, false);
 });
 
 for (const config of [
@@ -29,7 +32,8 @@ for (const config of [
   { otpSingleUse: 'yes' }, { autoCache: 1 }, { cacheMissFallback: '' },
   { host: '' }, { host: 123 }, { bodyLimit: '' }, { bodyLimit: 'bad' }, { bodyLimit: '0kb' },
   { defaultCount: 5, maxRecords: 4 }, { maxRecords: 200000 },
-  { port: Number.MAX_SAFE_INTEGER + 1 }
+  { port: Number.MAX_SAFE_INTEGER + 1 }, { stateful: 'yes' }, { regions: 'REGION1,' },
+  { regions: 'TOOLONG123' }, { csdGroup: 'BAD GROUP' }, { logRequests: 'yes' }
 ]) {
   test(`rejects invalid configuration ${JSON.stringify(config)}`, () => assert.throws(() => createConfig(config)));
 }

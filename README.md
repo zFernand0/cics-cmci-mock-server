@@ -121,6 +121,69 @@ curl -u adminusr:adminpas -X POST \
 
 Resource POST, PUT, and DELETE return operation acknowledgements. **They do not persist resource changes.** POST requires a well-formed XML document with one `request` root. PUT validates XML when a body is provided and permits an empty operation request. `application/xml`, `text/xml`, and `application/*+xml` are accepted. Invalid documents, trailing garbage, extra roots, and DTD/entity declarations are rejected. Unsupported content types return 415; oversized bodies return 413. `DELETE /CICSSystemManagement/CICSResultCache/TOKEN` actually deletes the retained set.
 
+### Run the CICS client system tests
+
+The optional stateful mode supports the existing SDK and CLI system tests in [zowe/cics-for-zowe-client](https://github.com/zowe/cics-for-zowe-client). No client source or connection configuration changes are required.
+
+Install dependencies in both checkouts first. For CLI tests, install Zowe CLI and build the SDK and CLI using the client's existing package scripts:
+
+```sh
+cd ~/gh/zowe/cics/packages/sdk
+npm run build
+cd ../cli
+npm run build
+```
+
+From this mock-server project:
+
+```sh
+# Defaults to ~/gh/zowe/cics and runs both SDK and CLI suites.
+npm run test:client
+
+# Select a different checkout or run only the SDK suite.
+npm run test:client -- --client ~/gh/zowe/cics --package sdk
+
+# Forward Jest options after a second --, for example a quick retrieval check.
+npm run test:client -- --package sdk -- --runTestsByPath __tests__/__system__/get/Get.resource.system.test.ts
+```
+
+The runner starts an isolated stateful server on an available loopback port, supplies `adminusr` / `adminpas`, `REGION1`, and `MOCKGRP` via a temporary properties file, and invokes `npm run test:system` from each selected client package. It uses the test utilities' `propdirectory` and `propfile` environment overrides, leaving any existing `custom_properties.yaml` untouched. The server and properties file are removed when the run finishes or is interrupted. Failures propagate as a nonzero exit status. The client's tests still create their usual ignored reports and isolated CLI plugin installations.
+
+These suites include deliberate delays for real CICS; allow several minutes. CLI help snapshots depend on the installed Zowe CLI version. For example, a newer CLI's `--cert-account` option can cause help snapshot failures independently of the mock. The runner does not update snapshots or suppress those failures. The current client also has a focused `fit` in its GET CLI suite, which causes its two other GET tests to be skipped by Jest.
+
+For a targeted CLI operation check that explicitly excludes help snapshots:
+
+```sh
+npm run test:client -- --package cli -- --testNamePattern 'successfully|with basic options|with profile options'
+```
+
+To run the server manually in stateful mode:
+
+```sh
+STATEFUL=true npm start
+```
+
+Use this connection configuration in an external properties file when invoking the client's package tests yourself:
+
+```yaml
+cics:
+  user: adminusr
+  password: adminpas
+  host: 127.0.0.1
+  port: 9080
+  protocol: http
+  rejectUnauthorized: false
+cmci:
+  regionName: REGION1
+  csdGroup: MOCKGRP
+urimap:
+  certificate: " "
+```
+
+Stateful mode keeps definitions and installed resources separately. It implements definition creation/deletion, duplicate feedback (`TABLEERROR` with `DUPRES`), `CSDINSTALL`, installed-resource deletion, attribute updates such as URI-map `ENABLESTATUS`, program `NEWCOPY`/`PHASEIN`, and CSD group list membership. `DFHBRCV` is seeded as an installed program. New definitions are visible in subsequent GETs; existing retained result sets remain snapshots. State belongs to the app instance and resets on restart. Each resource table in each configured region is bounded by `MAX_RECORDS`.
+
+Supported `CRITERIA` syntax is `field=value` or `field==value`, optionally quoted, with `*` wildcards, parentheses, and `AND` conjunctions. Fields and values are matched case-insensitively. `PARAMETER=CSDGROUP(group)` filters definitions. Unsupported expressions/actions fail explicitly. Unknown regions return CMCI `INVALIDPARM`; unmatched queries or mutations return `NODATA`. `REGIONS=REGION1,REGION2` configures allowed regions; `CSD_GROUP=GROUP1` configures the seeded CSD group. Context/scope paths select the final region; this mode does not implement plex membership or aggregation, full IBM schema validation, load-library behavior, or persistent storage. Supplied fixtures seed each region's tables. Default mode retains its original generated records and stateless acknowledgements.
+
 ## Custom fixtures and embedded use
 
 ```js
@@ -159,7 +222,7 @@ Programs, managed regions, plexes, remote files, JVM endpoints, and both tempora
 
 These four templates include `eyu_cicsname="REGION1"` and deterministic identities. JVM endpoints include both identity fields, `jvmendpoint` and `jvmserver`; shared queues include `name` and `poolname`. Queue `hexname` values encode the 16-byte, space-padded EBCDIC name. They support the same authentication, fixtures, sorting, retained-result pagination, and stateless write acknowledgements as the other resource endpoints.
 
-Context/scope path segments are accepted and separate cache identity. They do not filter generated records. `CRITERIA` filtering, resource persistence, resource-specific actions, full IBM schema validation, and the CMCI schema endpoint are not implemented. SDK/extension integration should verify the fields it consumes with custom fixtures.
+In default mode, context/scope path segments separate cache identity without filtering generated records, and writes remain stateless. Enable the optional stateful mode above for region validation, criteria filtering, and the supported resource operations. Full IBM schema validation and the CMCI schema endpoint are not implemented. SDK/extension integration should verify the fields it consumes with custom fixtures.
 
 ## Administrative endpoints
 
@@ -186,6 +249,34 @@ Reading an admin endpoint with Basic credentials creates or renews the admin's a
 
 ## Configuration
 
+### Request logging
+
+Set `LOG_REQUESTS=true` to print one line for every completed HTTP response:
+
+```sh
+LOG_REQUESTS=true STATEFUL=true PORT=9080 npm start
+```
+
+Example output:
+
+```text
+GET /CICSSystemManagement/CICSProgram/REGION1?CRITERIA=(PROGRAM=D*) -> 200 (2.4 ms)
+POST /CICSSystemManagement/CICSDefinitionProgram/REGION1 -> 200 (1.1 ms)
+GET /missing -> 404 (0.3 ms)
+```
+
+Each line includes the method, request path and query, HTTP status, and elapsed time. Logging includes authentication failures, malformed bodies, missing routes, and CORS preflight responses. Headers and bodies are omitted; query parameters containing password, token, OTP, cookie, authorization, secret, or credential names are redacted. Request logging is disabled by default.
+
+The client test runner supports the same setting:
+
+```sh
+LOG_REQUESTS=true npm run test:client -- --package sdk
+```
+
+For embedded use, pass `config: { logRequests: true }` to `createApp()`. Messages use `console.log` by default or the supplied `logger.log` method.
+
+### Server settings
+
 `npm start` and `npm run dev` read these environment variables. Programmatic `config` keys use camelCase, as shown below.
 
 | Environment | Config key | Default |
@@ -203,6 +294,10 @@ Reading an admin endpoint with Basic credentials creates or renews the admin's a
 | `AUTO_CACHE` | `autoCache` | `true` |
 | `CACHE_MISS_FALLBACK` | `cacheMissFallback` | `true` |
 | `BODY_LIMIT` | `bodyLimit` | `100kb` |
+| `STATEFUL` | `stateful` | `false` |
+| `REGIONS` | `regions` | `REGION1` (comma-separated names) |
+| `CSD_GROUP` | `csdGroup` | `MOCKGRP` |
+| `LOG_REQUESTS` | `logRequests` | `false` |
 
 Boolean environment values must be `true` or `false`. Numeric configuration is validated before startup; `DEFAULT_COUNT <= MAX_RECORDS <= MAX_CACHED_RECORDS`. Limits cap retained record counts, not exact bytes. Increase them deliberately for larger client datasets. Use `HOST=0.0.0.0` when a container or another machine needs access.
 
@@ -227,9 +322,9 @@ The test suite covers every listed resource, malformed requests, authentication 
 
 ## Next improvements, in priority order
 
-1. **Real SDK contract tests.** Run representative retrieval, retained pagination, and authentication flows through `CicsCmciRestClient`. This is the strongest next check that the mock catches actual extension regressions.
+1. **More SDK contract tests.** `npm run test:client` runs the existing SDK/CLI system suites. Add retained pagination and authentication flows through `CicsCmciRestClient` to broaden client coverage.
 2. **Representative resource fixtures.** Add sanitized, versioned IBM response fixtures for the attributes the extension uses. Verify required fields for each resource instead of relying on generic records.
-3. **Stateful resource operations and filtering.** Implement create/update/delete and a documented subset of `CRITERIA`, scoped by plex/region. Test read-after-write behavior and retained snapshot semantics.
+3. **Broader stateful operations and filtering.** Extend the optional stateful mode with additional actions, criteria operators, and plex membership/aggregation.
 4. **Scripted failure scenarios.** Add per-instance sequences for latency, transport failures, and HTTP errors so clients can test retries, cancellation, and recovery reproducibly.
 
 ## Compatibility changes

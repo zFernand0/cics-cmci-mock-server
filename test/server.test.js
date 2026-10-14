@@ -22,7 +22,8 @@ test('importing the module starts no sockets or timers and retains the Express e
 test('startServer honors environment settings and removes signal handlers on close', async t => {
   const logs = [];
   const signals = process.listenerCount('SIGTERM');
-  const server = startServer({ env: { PORT: '0', DEFAULT_COUNT: '1' }, logger: { log: message => logs.push(message), error: assert.fail } });
+  const server = startServer({ env: { PORT: '0', DEFAULT_COUNT: '1', LOG_REQUESTS: 'true' },
+    logger: { log: message => logs.push(message), error: assert.fail } });
   t.after(() => new Promise(resolve => { server.close(resolve); server.closeAllConnections(); }));
   await once(server, 'listening');
   assert.equal(process.listenerCount('SIGTERM'), signals + 1);
@@ -30,6 +31,7 @@ test('startServer honors environment settings and removes signal handlers on clo
   const response = await fetch(`http://127.0.0.1:${server.address().port}/health`);
   assert.equal(response.status, 200);
   await response.text();
+  assert.match(logs[1], /^GET \/health -> 200 /);
   await new Promise(resolve => server.close(resolve));
   assert.equal(process.listenerCount('SIGTERM'), signals);
 });
