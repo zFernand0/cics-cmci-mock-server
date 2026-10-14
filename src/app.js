@@ -13,6 +13,7 @@ const { RESOURCE_TYPES, keyData } = require('./resources');
 const { sendResponse } = require('./cmci');
 const { createCmciRouter } = require('./cmci-routes');
 const { createAdminRouter } = require('./admin-routes');
+const { requestLogging } = require('./request-logging');
 
 function normalizeFixtures(fixtures, maxRecords) {
   const normalized = Object.create(null);
@@ -43,6 +44,7 @@ function createApp(options = {}) {
   const app = express();
   app.disable('x-powered-by');
   app.set('query parser', 'simple');
+  if (config.logRequests) app.use(requestLogging(options.logger));
   app.use(cors());
   app.use(cookieParser());
   // Expiry is enforced on every request; no timers or sockets start on import.

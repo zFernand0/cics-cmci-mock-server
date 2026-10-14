@@ -7,8 +7,10 @@ const express = require('express');
 const { RESOURCE_TYPES, generateMockData } = require('./resources');
 const { RESPONSE_CODES, CmciError, sendResponse, normalizeQuery,
   parseInteger, parseOrderBy, paginate, validateXML } = require('./cmci');
+const { createCatalog } = require('./catalog');
 
 function createCmciRouter(state, config, auth, fixtures) {
+  const catalog = config.stateful ? createCatalog(config, fixtures) : null;
   function readCached(req, res, entry, query, index, count, order) {
     const records = Object.hasOwn(query, 'summonly') ? [] : paginate(entry.data, index, count, order);
     const keep = Object.hasOwn(query, 'nodiscard');
@@ -62,7 +64,8 @@ function createCmciRouter(state, config, auth, fixtures) {
         }
         await validateXML(req.body);
       }
-      // Operation acknowledgements remain stateless; see the documented scope.
+      if (catalog) return sendResponse(req, res, await catalog.mutate(req.method, resourceType, parts.slice(1), query, req.body));
+      // Default operation acknowledgements remain stateless.
       return sendResponse(req, res, { total: 1 });
     }
 
@@ -75,11 +78,12 @@ function createCmciRouter(state, config, auth, fixtures) {
       if (entry) return readCached(req, res, entry, query, index, count ?? null, order);
       if (!config.cacheMissFallback) throw new CmciError(404, 'NOTAVAILABLE', 'Cache token not found or expired');
     }
-    const requestedCount = count ?? fixtures[resourceType]?.length ?? config.defaultCount;
-    const key = JSON.stringify({ sessionId: req.session.id, path, count: requestedCount,
+    const liveData = catalog?.read(resourceType, parts.slice(1), query);
+    const requestedCount = count ?? liveData?.length ?? fixtures[resourceType]?.length ?? config.defaultCount;
+    const key = JSON.stringify({ sessionId: req.session.id, path, count: requestedCount, revision: catalog?.revision,
       query: Object.entries(query).filter(([name]) => !['cachetoken', 'cache', 'nodiscard', 'summonly', 'index', 'count', 'orderby'].includes(name)).sort(([a], [b]) => a.localeCompare(b)) });
     let entry = state.results.get(state.requestIndex.get(key));
-    let data = entry?.data || (fixtures[resourceType] ? fixtures[resourceType].slice(0, requestedCount) : generateMockData(resourceType, requestedCount));
+    let data = entry?.data || (liveData || fixtures[resourceType])?.slice(0, requestedCount) || generateMockData(resourceType, requestedCount);
     const retain = config.autoCache || Object.hasOwn(query, 'nodiscard') || query.cache === 'true';
     if (retain && data.length) {
       entry = state.storeResult({ key, resourceType, path, data, sessionId: req.session.id,

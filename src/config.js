@@ -16,7 +16,11 @@ const DEFAULTS = Object.freeze({
   otpSingleUse: true,
   autoCache: true,
   cacheMissFallback: true,
-  bodyLimit: '100kb'
+  bodyLimit: '100kb',
+  stateful: false,
+  regions: 'REGION1',
+  csdGroup: 'MOCKGRP',
+  logRequests: false
 });
 
 const ENV_KEYS = {
@@ -25,7 +29,9 @@ const ENV_KEYS = {
   maxCachedRecords: 'MAX_CACHED_RECORDS', cacheTtlMs: 'CACHE_TTL_MS',
   sessionTtlMs: 'SESSION_TTL_MS', otpTtlMs: 'OTP_TTL_MS',
   otpSingleUse: 'OTP_SINGLE_USE', autoCache: 'AUTO_CACHE',
-  cacheMissFallback: 'CACHE_MISS_FALLBACK', bodyLimit: 'BODY_LIMIT'
+  cacheMissFallback: 'CACHE_MISS_FALLBACK', bodyLimit: 'BODY_LIMIT',
+  stateful: 'STATEFUL', regions: 'REGIONS', csdGroup: 'CSD_GROUP',
+  logRequests: 'LOG_REQUESTS'
 };
 
 function createConfig(overrides = {}, env = {}) {
@@ -56,6 +62,10 @@ function createConfig(overrides = {}, env = {}) {
   }
   if (config.defaultCount > config.maxRecords) throw new RangeError('DEFAULT_COUNT exceeds MAX_RECORDS');
   if (config.maxRecords > config.maxCachedRecords) throw new RangeError('MAX_RECORDS exceeds MAX_CACHED_RECORDS');
+  if (!config.regions.split(',').every(name => /^[A-Za-z0-9@$#]{1,8}$/.test(name.trim()))) {
+    throw new TypeError('REGIONS must be comma-separated CICS region names of 1 to 8 characters');
+  }
+  if (!/^[A-Za-z0-9@$#]{1,8}$/.test(config.csdGroup)) throw new TypeError('CSD_GROUP must be a CICS group name');
   return Object.freeze(config);
 }
 
